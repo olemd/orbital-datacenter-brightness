@@ -332,8 +332,6 @@ table above are real, not sampling noise.
 | `skymodel.py` | twilight sky brightness over the whole dome |
 | `realstars.py`, `hyg_naked_eye.npz` | 8,913 real naked-eye stars, HYG database |
 | `frame.py` | composes one ground frame: sky, stars, satellites |
-| `overlay.py` | the on-screen inset, labels and closing card |
-| `current_sky.py` | the same counts for today's Starlink fleet, for comparison |
 | `twilight.py` | twilight sky brightness and limiting magnitude |
 | `stars.py` | naked-eye star counts, from the standard catalogue tabulation |
 | `spacing.py` | satellite-to-satellite spacing, three ways |
@@ -349,11 +347,13 @@ table above are real, not sampling noise.
 | `sky_view.py` | the app's bridge to the same physics the video uses |
 | `ASSUMPTIONS.md` | every assumption, its provenance, and what is not modeled |
 
-The ground renderer **is** included: `skymodel.py`, `realstars.py`, `frame.py`
-and `overlay.py` produce the twilight frames. Every satellite drawn is one that
-beats the sky brightness at its own position, so the number shown on a frame and
-the dots in it agree by construction. Only the opening approach sequence is
-left out, because it needs Earth surface textures with their own licensing.
+The ground renderer **is** included: `skymodel.py`, `realstars.py` and
+`frame.py` produce the twilight frames. Every satellite drawn is one that beats
+the sky brightness at its own position, so the number shown on a frame and the
+dots in it agree by construction. Two parts of the video are left out: the
+opening approach sequence, which needs Earth surface textures with their own
+licensing, and the on-screen inset and labels, which are presentation rather
+than physics.
 
 Two conventions are in play and it is worth being explicit about which is which.
 The tables above are **whole sky**, against the zenith limit, which is the right
