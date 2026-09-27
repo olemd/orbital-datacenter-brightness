@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orbital data centers in your night sky</title>
+<meta name="description" content="What SpaceX's proposed orbital data center constellation would look like from the ground, for any latitude, date and time. Two published brightness models, real stars, computed in your browser.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="What would orbital data centers look like from your sky?">
+<meta property="og:description" content="500,000 satellites from SpaceX's FCC filing, two published brightness models and the real stars, for any latitude, date and time. Computed in your browser.">
+<meta property="og:image" content="https://sdross0.github.io/orbital-datacenter-brightness/preview.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root {
+    --bg: #05070c; --panel: #0a0e16; --rule: #1b2230; --text: #d8e0ec;
+    --dim: #8b97a8; --faint: #5c6778; --boley: #ff9a3c; --mini: #7ab8ff;
+    --star: #cfd8e8; --accent: #e8eef8;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  a { color: var(--mini); }
+  header { padding: 18px 22px 8px; }
+  h1 { font-size: 1.45rem; font-weight: 600; margin: 0 0 4px; letter-spacing: .005em; }
+  .sub { color: var(--dim); margin: 0; max-width: 64rem; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; padding: 10px 22px 22px; }
+  @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+
+  /* ---------- the sky */
+  #skywrap { position: relative; width: 100%; height: min(68vh, 760px); min-height: 360px;
+    background: #000; border-radius: 6px; overflow: hidden; touch-action: none; cursor: grab; user-select: none; }
+  #skywrap.dragging { cursor: grabbing; }
+  #skywrap:fullscreen { height: 100vh; border-radius: 0; }
+  #sky, #overlay { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #overlay { pointer-events: none; }
+  .chip { position: absolute; background: rgba(5, 8, 14, .62); padding: 5px 9px; border-radius: 4px;
+    font-size: .82rem; color: var(--text); pointer-events: none; font-variant-numeric: tabular-nums; }
+  #chipWhen { top: 10px; left: 10px; }
+  #chipView { top: 10px; right: 10px; text-align: right; }
+  #chipCursor { bottom: 10px; left: 10px; color: var(--dim); display: none; }
+  @media (max-width: 640px) {
+    header { padding: 14px 14px 4px; } h1 { font-size: 1.2rem; } main { padding: 8px 12px 18px; }
+    #chipView { top: auto; bottom: 52px; right: 10px; }
+    #skywrap { height: 62vh; }
+    #skyButtons button { font-size: .78rem; padding: 4px 8px; }
+  }
+  #skyButtons { position: absolute; bottom: 10px; right: 10px; display: flex; gap: 6px; }
+  #skyButtons button { pointer-events: auto; }
+  #msg { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    max-width: 30rem; text-align: center; background: rgba(5, 8, 14, .78); padding: 12px 16px;
+    border-radius: 6px; color: var(--text); display: none; pointer-events: none; }
+
+  /* ---------- controls */
+  aside { display: flex; flex-direction: column; gap: 14px; }
+  .box { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; }
+  .lab { font-size: .68rem; letter-spacing: .09em; text-transform: uppercase; color: var(--dim);
+    margin: 0 0 6px; }
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .row + .row { margin-top: 8px; }
+  input[type=number], input[type=date], select {
+    background: #0f1420; color: var(--text); border: 1px solid #263044; border-radius: 4px;
+    padding: 5px 7px; font: inherit; font-size: .9rem; }
+  input[type=number] { width: 6.2rem; }
+  input[type=range] { width: 100%; accent-color: #9fb3d1; }
+  button { background: #141b29; color: var(--text); border: 1px solid #2a3549; border-radius: 4px;
+    padding: 5px 10px; font: inherit; font-size: .85rem; cursor: pointer; }
+  button:hover { border-color: #43536f; }
+  button:disabled { opacity: .45; cursor: default; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid #2a3549;
+    border-radius: 4px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 7px 4px; background: #0f1420; color: var(--dim); white-space: nowrap; font-size: .82rem; }
+  .seg button.on { color: #0a0e16; font-weight: 600; }
+  .seg button.on[data-model=boley] { background: var(--boley); }
+  .seg button.on[data-model=mini] { background: var(--mini); }
+  .small { font-size: .8rem; color: var(--dim); }
+  .links button { background: none; border: 0; color: var(--mini); padding: 0 6px 0 0; font-size: .8rem; }
+  .readout { font-variant-numeric: tabular-nums; font-size: .88rem; }
+
+  /* ---------- numbers */
+  table.num { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  table.num th { font-size: .66rem; letter-spacing: .09em; text-transform: uppercase; color: var(--dim);
+    font-weight: 500; text-align: right; padding: 0 0 4px; }
+  table.num th:first-child { text-align: left; }
+  table.num td { padding: 2px 0 2px 14px; text-align: right; font-size: .95rem; }
+  table.num td:first-child { padding-left: 0; }
+  table.num td:first-child { text-align: left; font-size: .86rem; }
+  table.num tr.sel td { font-size: 1.28rem; font-weight: 600; }
+  table.num td:first-child { white-space: nowrap; }
+  table.num tr.sel td:first-child { font-size: .86rem; font-weight: 600; }
+  .c-boley { color: var(--boley); } .c-mini { color: var(--mini); } .c-star { color: var(--star); }
+  #ratio { margin: 8px 0 0; font-size: .9rem; }
+  #curve { width: 100%; height: 130px; display: block; cursor: crosshair; }
+  details summary { cursor: pointer; color: var(--dim); font-size: .85rem; }
+  details[open] summary { margin-bottom: 8px; }
+
+  /* ---------- notes */
+  #notes { padding: 0 22px 30px; max-width: 64rem; }
+  #notes h2 { font-size: 1.05rem; margin: 22px 0 6px; }
+  #notes p { margin: 0 0 10px; color: #c3cddb; }
+  footer { padding: 0 22px 30px; color: var(--faint); font-size: .8rem; }
+  noscript, #fatal { display: block; margin: 20px; color: #ffb4a0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>What would orbital data centers look like from your sky?</h1>
+  <p class="sub">The sun-synchronous half of SpaceX's proposed orbital data center constellation,
+  500,000 satellites, propagated for your latitude, date and time and drawn with two published
+  brightness models and the real stars. Everything is computed in your browser. Drag the sky to look
+  around.</p>
+</header>
+<noscript>This page needs JavaScript and WebGL 2.</noscript>
+<div id="fatal" hidden></div>
+
+<main>
+  <section>
+    <div id="skywrap" aria-label="Simulated sky. Drag to look around, scroll or pinch to zoom.">
+      <canvas id="sky"></canvas>
+      <canvas id="overlay"></canvas>
+      <div class="chip" id="chipWhen"></div>
+      <div class="chip" id="chipView"></div>
+      <div class="chip" id="chipCursor"></div>
+      <div id="msg"></div>
+      <div id="skyButtons">
+        <button id="btnAim" title="Turn to the fullest part of the sky at this moment">Aim at densest sky</button>
+        <button id="btnFull" title="Fullscreen">Fullscreen</button>
+      </div>
+    </div>
+
+    <div class="box" style="margin-top:14px">
+      <div class="row" style="justify-content:space-between">
+        <div class="lab" style="margin:0">Satellites visible across the whole sky, through the night</div>
+        <div class="small" id="curveStatus"></div>
+      </div>
+      <svg id="curve" role="img" aria-label="Whole-sky satellite and star counts through the night. Click to jump to a time."></svg>
+      <div class="row small">
+        <span><span class="c-boley">&#9644;</span> no mitigation</span>
+        <span><span class="c-mini">&#9644;</span> optimistic mitigation</span>
+        <span><span class="c-star">&#9476;</span> stars</span>
+        <span style="margin-left:auto" class="links">
+          <button id="btnPeakEve">Evening peak</button><button id="btnPeakMorn">Morning peak</button>
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <aside>
+    <div class="box">
+      <div class="lab">When</div>
+      <input type="range" id="time" min="0" max="720" step="1" aria-label="Time of night">
+      <div class="readout" id="timeReadout"></div>
+      <div class="row">
+        <button id="btnPlay">Play</button>
+        <select id="motion" aria-label="What moves">
+          <option value="sats10">Satellites moving, 10x</option>
+          <option value="sats60">Satellites moving, 60x</option>
+          <option value="night">The night passing, 1,440x</option>
+        </select>
+      </div>
+      <div class="row">
+        <label class="small" for="date">Night beginning</label>
+        <input type="date" id="date">
+      </div>
+      <div class="row links small">
+        <button data-md="3-20">Mar equinox</button><button data-md="6-21">Jun solstice</button>
+        <button data-md="9-22">Sep equinox</button><button data-md="12-21">Dec solstice</button>
+      </div>
+    </div>
+
+    <div class="box">
+      <div class="lab">Where</div>
+      <div class="row">
+        <label class="small" for="lat">Latitude</label>
+        <input type="number" id="lat" min="-89" max="89" step="0.1" aria-label="Latitude in degrees, negative for south">
+        <span class="small" id="latNS">&deg; N</span>
+        <button id="btnGeo" title="Uses your latitude only. Nothing leaves your browser.">Use my location</button>
+      </div>
+      <div class="small" style="margin-top:6px">Negative for south. Longitude does not matter: this
+        constellation is fixed to the Sun, so only latitude and sun time do.</div>
+    </div>
+
+    <div class="box">
+      <div class="lab">Brightness model</div>
+      <div class="seg" id="modelSeg">
+        <button data-model="boley">No mitigation</button>
+        <button data-model="mini">Optimistic mitigation</button>
+      </div>
+      <div class="lab" style="margin-top:12px">Light pollution <span id="bortleName" style="text-transform:none;letter-spacing:0"></span></div>
+      <input type="range" id="bortle" min="1" max="8" step="1" aria-label="Bortle class">
+    </div>
+
+    <div class="box">
+      <table class="num">
+        <thead><tr><th></th><th>whole sky</th><th>in view</th></tr></thead>
+        <tbody>
+          <tr id="rowBoley" class="c-boley"><td>No mitigation</td><td id="nBoley"></td><td id="vBoley"></td></tr>
+          <tr id="rowMini" class="c-mini"><td>Optimistic mitigation</td><td id="nMini"></td><td id="vMini"></td></tr>
+          <tr class="c-star"><td>Stars</td><td id="nStars"></td><td id="vStars"></td></tr>
+        </tbody>
+      </table>
+      <p id="ratio"></p>
+      <div class="small" id="sunInfo" style="margin-top:8px"></div>
+    </div>
+
+    <div class="box">
+      <details>
+        <summary>More settings</summary>
+        <div class="row">
+          <label class="small" for="nsats">Satellites in orbit</label>
+          <select id="nsats">
+            <option value="1000">1,000</option><option value="10000">10,000</option>
+            <option value="50000">50,000</option><option value="100000">100,000</option>
+            <option value="250000">250,000</option><option value="500000">500,000 (as filed)</option>
+          </select>
+        </div>
+        <div class="row">
+          <label class="small" for="spread">Orbital plane spread</label>
+          <select id="spread">
+            <option value="10">&plusmn;10&deg; (Boley et al.)</option>
+            <option value="30">&plusmn;30&deg; (SpaceX filed tolerance)</option>
+          </select>
+        </div>
+        <div class="row">
+          <label class="small" for="fov">Field of view</label>
+          <input type="range" id="fov" min="20" max="120" step="1" style="width:9rem">
+          <span class="small readout" id="fovOut"></span>
+        </div>
+        <div class="row">
+          <label class="small"><input type="checkbox" id="grid"> Altitude circles</label>
+        </div>
+        <p class="small" style="margin:8px 0 0">The plane spread is the one number here that is not from
+          SpaceX's filing. It barely moves the no-mitigation count and moves the optimistic one by up to an
+          order of magnitude. See the notes below.</p>
+      </details>
+    </div>
+  </aside>
+</main>
+
+<section id="notes">
+  <h2>What this is</h2>
+  <p><b>Orbits.</b> The sun-synchronous groups in Table 1 of SpaceX's 29 May 2026 supplement to the FCC
+  (ICFS File No. SAT-LOA-20260108-00016): 500,000 satellites between 565 and 1,002 km in dawn-dusk
+  orbits, which keep them sunlit while the ground below is already dark. The roughly half of the filing
+  near 30 degrees inclination is not included, so these counts are a floor for the full filing.</p>
+  <p><b>No mitigation</b> is the idealized reflector from Boley, Lawler &amp; Rein 2026
+  (<a href="https://arxiv.org/abs/2608.02757">arXiv:2608.02757</a>), their equation 2. It is what these
+  do if nobody tries to darken them.</p>
+  <p><b>Optimistic mitigation</b> is the measured on-orbit brightness of a Starlink Gen2 Mini in its
+  darkening mode (Mallama et al. 2023, <a href="https://arxiv.org/abs/2306.06657">arXiv:2306.06657</a>),
+  scaled up for the larger spacecraft. It assumes that mitigation transfers to a satellite roughly six
+  times bigger, which is an assumption, not a measurement.</p>
+  <p><b>Neither is a prediction.</b> The gap between them is the point. SpaceX has not published an
+  expected brightness for these spacecraft, and one published magnitude and phase function would
+  collapse the range.</p>
+  <p><b>Sky brightness</b> follows the Sun through twilight, calibrated to measurement at the zenith and
+  modeled in shape across the rest of the sky, with artificial skyglow added from the light pollution
+  setting. A satellite or star is drawn only if it is bright enough to see against the sky at its own
+  position, so the picture and the in-view counts agree. The whole-sky counts use the limit at the
+  zenith, the convention the published tables use. The Moon is not modeled.</p>
+  <p><b>Stars</b> are real: 8,912 stars brighter than magnitude 6.5 from the HYG catalog, in their correct
+  positions for the date.</p>
+  <p><b>Season matters more than you would guess</b>, especially for the optimistic model. Near a
+  solstice the geometry lights the satellites almost face-on, where the measured phase function is
+  several magnitudes brighter than at the side-lit angles of an equinox. How large that swing is depends
+  on the orbital plane spread: it is large at the &plusmn;10 degrees used by default and much smaller at
+  the &plusmn;30 degrees SpaceX filed.</p>
+  <p><b>Precision.</b> The satellites' positions within each orbital plane are one random realization.
+  The no-mitigation counts are steady to about 2% between realizations; the optimistic count near an
+  equinox moves by about 30%, so read it to one significant figure.</p>
+  <p><b>Motion.</b> "Satellites moving" advances the orbits and holds the clock. "The night passing" runs
+  the clock and holds the orbits, because at that speed each satellite would lap the sky every few
+  seconds and all you would see is flicker; any one moment of it is statistically the same sky.</p>
+  <p><b>Sun time, not clock time.</b> Times here are local solar time: noon is when the Sun is highest.
+  Your clock can differ by an hour or more depending on where you sit in your time zone, and another hour
+  in summer.</p>
+  <p>This page runs the same physics as the Python in the repository, and it has been checked against
+  it: every count here matches the Python to the satellite for the same inputs
+  (<code>validate_web.py</code>). Code, assumptions and every correction:
+  <a href="https://github.com/sdross0/orbital-datacenter-brightness">github.com/sdross0/orbital-datacenter-brightness</a>.</p>
+</section>
+<footer>Shane Ross, Virginia Tech &middot; <span id="version"></span></footer>
+
+<script src="data.js"></script>
+<script src="physics.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
