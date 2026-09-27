@@ -282,8 +282,32 @@ python3 raan_sensitivity.py --dec
 python3 elevation.py            # how high in the sky they sit
 ```
 
-There is also an interactive version, which renders the whole sky for any
-latitude, date and time and lets you drag it around in a browser:
+## Interactive version
+
+**[sdross0.github.io/orbital-datacenter-brightness](https://sdross0.github.io/orbital-datacenter-brightness/)**
+
+Any latitude, date and time, both brightness models, the real stars, and the
+satellites moving, computed entirely in the browser. Nothing is sent anywhere,
+and it works at any latitude, including polar night.
+
+It is a port of the Python in this repository, not a separate model, and it
+loads the exact constellation layout `lsm.build_sso` produces rather than
+generating its own. `validate_web.py` runs the same 25 cases through both and
+checks every count agrees: whole-sky satellites for both models, satellites
+drawn against the local sky, and stars, across seasons, latitudes, light
+pollution, both plane spreads and subsampled constellations. They match to the
+satellite.
+
+The site is the `docs/` folder: four static files, no server. It can be hosted
+anywhere that serves plain HTML, or opened locally by double-clicking
+`docs/index.html`. To rebuild it after changing the physics:
+
+```
+python3 export_web_data.py      # writes docs/data.js from lsm.build_sso
+python3 validate_web.py         # checks docs/physics.js against the Python
+```
+
+The older Streamlit version needs Python running on a server:
 
 ```
 pip install -r requirements.txt
@@ -316,7 +340,10 @@ table above are real, not sampling noise.
 | `sensitivity.py` | how the counts move under a systematic brightness error |
 | `raan_sensitivity.py` | how the counts move with the assumed plane spread |
 | `elevation.py` | the distribution of elevation angle, low sky against high |
-| `app.py` | the interactive version, for any latitude, date and time |
+| `docs/` | the browser version: `index.html`, `app.js`, `physics.js`, `data.js` |
+| `export_web_data.py` | writes `docs/data.js`, the exact constellation and star catalog |
+| `validate_web.py` | checks the browser physics against the Python, count for count |
+| `app.py` | the older Streamlit version, which needs a Python server |
 | `pano.py` | the whole dome as one panorama, for the app |
 | `viewer.py` | the browser viewer: drag to look around, play the motion |
 | `sky_view.py` | the app's bridge to the same physics the video uses |
