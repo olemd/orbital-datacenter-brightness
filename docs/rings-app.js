@@ -73,8 +73,7 @@
   function sunTime(lst) {
     var h = mod(lst, 24), hh = Math.floor(h), mm = Math.round((h - hh) * 60);
     if (mm === 60) { hh = (hh + 1) % 24; mm = 0; }
-    var ap = hh < 12 ? "am" : "pm", h12 = hh % 12 === 0 ? 12 : hh % 12;
-    return h12 + ":" + (mm < 10 ? "0" : "") + mm + " " + ap;
+    return (hh < 10 ? "0" : "") + hh + ":" + (mm < 10 ? "0" : "") + mm;
   }
   function todayISO() {
     var d = new Date(), m = d.getMonth() + 1, dd = d.getDate();
@@ -771,7 +770,7 @@
     for (var hr = Math.ceil(N.ref + N.lo / 60); hr <= N.ref + N.hi / 60; hr++) {
       var t = (hr - N.ref) * 60;
       if (N.kind === "normal" && (Math.abs(t) < 40 || Math.abs(t - N.len) < 40)) continue;
-      if (mod(hr, 3) === 0) ticks.push([t, sunTime(hr).replace(":00", "")]);
+      if (mod(hr, 3) === 0) ticks.push([t, sunTime(hr)]);
     }
     var placed = [];
     ticks = ticks.filter(function (tk) {
