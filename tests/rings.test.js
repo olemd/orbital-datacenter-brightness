@@ -68,14 +68,24 @@ test("doubling the area brightens a piece by 2.5 log10(2)", () => {
 });
 
 test("input outside the limits is clamped, not trusted", () => {
-  const s = RG.sanitize({ alt: -5, inc: 999, raan: "x", width: 1e9, albedo: 2 });
-  expect(s).toEqual({ alt: 100, inc: 180, raan: 0, width: 100000, albedo: 1 });
+  const s = RG.sanitize({ alt: -5, inc: 999, raan: "x", width: 1e9, albedo: 2,
+                          fix: 0.7, lon: 400, stations: 99.4, stSize: 0, cable: -1 });
+  expect(s).toEqual({ alt: 100, inc: 180, raan: 0, width: 100000, albedo: 1,
+                      fix: 1, lon: 180, stations: 24, stSize: 1, cable: 0 });
+});
+
+test("specs from before the ground-fixed fields existed get their defaults", () => {
+  const s = RG.sanitize({ alt: 2000, inc: 45, raan: 10, width: 100, albedo: 0.2 });
+  expect(s.fix).toBe(0);
+  expect(s.stations).toBe(0);
+  expect(s.stSize).toBe(RG.DEFAULTS.stSize);
+  expect(s.cable).toBe(RG.DEFAULTS.cable);
 });
 
 test("the path marks shadowed samples and breaks below the horizon", () => {
   const low = Object.assign({}, RING, { alt: 500 });
   const ring = RG.build(low, RA_SUN, true);
-  const p = RG.path(ring, 0, 24.0, 0.0);              // midnight: up, but dark
+  const p = RG.path(ring, 0, 24.0, 0.0).ring;         // midnight: up, but dark
   expect(p.length).toBe(4 * ring.n);
   let up = 0, lit = 0;
   for (let i = 0; i < p.length; i += 4) if (!isNaN(p[i])) { up++; lit += p[i + 3]; }
@@ -123,4 +133,75 @@ test("node shift counts days from noon on the epoch", () => {
   expect(RG.nodeShift(sp, "2026-03-30", 12.0, "2026-03-20")).toBeCloseTo(10 * RG.nodeRate(sp), 9);
   // 6 am the next morning, written as lst 30 on the night's date
   expect(RG.nodeShift(sp, "2026-03-20", 30.0, "2026-03-20")).toBeCloseTo(0.75 * RG.nodeRate(sp), 9);
+});
+
+const BIRCH = { alt: 2000, inc: 45, raan: 0, width: 100, albedo: 0.2, fix: 1, lon: 30,
+                stations: 4, stSize: 500, cable: 5 };
+
+test("a ground-fixed equatorial ring is the same as a star-fixed one", () => {
+  const ground = Object.assign({}, RING, { fix: 1, lon: 77 });
+  const lst = 21.0;
+  const a = RG.evaluate(RG.build(RING, RA_SUN, true), { lat: 20, lst: lst, dec: 0 });
+  const b = RG.evaluate(RG.build(ground, RA_SUN, true),
+                        { lat: 20, lst: lst, dec: 0, dNode: RG.nodeOffset(ground, "2026-09-22", lst, "2026-03-20", true) });
+  for (const k of ["up", "lit", "visible"]) expect(Math.abs(b[k] - a[k])).toBeLessThan(0.5);
+});
+
+test("a ground-fixed ring holds still in the sky all night", () => {
+  const ring = RG.build(BIRCH, RA_SUN, true);
+  const at = lst => RG.path(ring, 20, lst, 0, RG.nodeOffset(BIRCH, "2026-09-22", lst, "2026-03-20", true));
+  const a = at(19.0), b = at(27.0);                  // 7 pm and 3 am
+  let maxd = 0;
+  for (let i = 0; i < a.ring.length; i += 4) {
+    if (isNaN(a.ring[i])) { expect(isNaN(b.ring[i])).toBe(true); continue; }
+    for (let j = 0; j < 3; j++) maxd = Math.max(maxd, Math.abs(a.ring[i + j] - b.ring[i + j]));
+  }
+  expect(maxd).toBeLessThan(1e-9);
+  // ...while a star-fixed ring with the same tilt moves
+  const sky = Object.assign({}, BIRCH, { fix: 0 }), rs = RG.build(sky, RA_SUN, true);
+  const c = RG.path(rs, 20, 19.0, 0, 0).ring, d = RG.path(rs, 20, 27.0, 0, 0).ring;
+  let moved = 0;
+  for (let i = 0; i < c.length; i += 4) if (isNaN(c[i]) !== isNaN(d[i])) moved++;
+  expect(moved).toBeGreaterThan(10);
+});
+
+test("ground-fixed rings ignore the J2 switch; star-fixed ones follow it", () => {
+  expect(RG.nodeOffset(BIRCH, "2026-09-22", 21, "2026-03-20", true))
+    .toBe(RG.nodeOffset(BIRCH, "2026-09-22", 21, "2026-03-20", false));
+  const sky = Object.assign({}, BIRCH, { fix: 0 });
+  expect(RG.nodeOffset(sky, "2026-09-22", 21, "2026-03-20", false)).toBe(0);
+  expect(RG.nodeOffset(sky, "2026-09-22", 21, "2026-03-20", true)).not.toBe(0);
+});
+
+test("stations sit on the ring and cables hang straight down to the ground", () => {
+  const ring = RG.build(BIRCH, RA_SUN, false);
+  expect(ring.nStations).toBe(4);
+  const R_E = 6378.137;
+  for (let q = 0; q < 4; q++) {
+    const r = Math.hypot(ring.stations[3 * q], ring.stations[3 * q + 1], ring.stations[3 * q + 2]);
+    expect(r).toBeCloseTo(R_E + 2000, 6);
+  }
+  const C = ring.cable;
+  expect(C.n).toBe(4 * C.perCable);
+  const foot = Math.hypot(C.pos[0], C.pos[1], C.pos[2]), top = 3 * (C.perCable - 1);
+  expect(foot - R_E).toBeLessThan(1);
+  expect(Math.hypot(C.pos[top], C.pos[top + 1], C.pos[top + 2]) - R_E).toBeGreaterThan(1990);
+  // a star-fixed ring carries no stations, whatever the count says
+  expect(RG.build(Object.assign({}, BIRCH, { fix: 0 }), RA_SUN, true).nStations).toBe(0);
+  // and cable thickness 0 means no cables
+  expect(RG.build(Object.assign({}, BIRCH, { cable: 0 }), RA_SUN, true).cable.n).toBe(0);
+});
+
+test("a station overhead at dusk is seen at the zenith, cables and all", () => {
+  // equatorial ring, station at the node, node on our meridian, from the equator
+  const sp = { alt: 2000, inc: 0, raan: 0, width: 100, albedo: 0.2, fix: 1, lon: 0,
+               stations: 1, stSize: 500, cable: 50 };
+  const lst = 19.0;
+  const r = RG.evaluate(RG.build(sp, RA_SUN, false),
+                        { lat: 0, lst: lst, dec: 0, local: true,
+                          dNode: RG.nodeOffset(sp, "2026-09-22", lst, "2026-03-20", true) });
+  expect(r.stations).toEqual({ total: 1, up: 1, lit: 1, visible: 1 });
+  expect(r.stationDraw[2]).toBeCloseTo(1, 6);       // straight up
+  expect(r.cable.up).toBeGreaterThan(0);            // seen end-on, but there
+  expect(r.cable.lit).toBeLessThanOrEqual(r.cable.up);
 });
