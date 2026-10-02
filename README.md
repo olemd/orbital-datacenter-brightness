@@ -331,6 +331,16 @@ the fork's own.
   day for a ring at 2,000 km tilted 45 deg. This assumes the ring moves at
   orbital speed; a Birch ring's faster rotor, or active station-keeping, would
   change it. It is applied as a rotation about the pole.
+- **Fixed to the ground (Birch).** Birch's rings are made to precess once a
+  day so they "hover above any meridian selected on the surface of Earth"
+  ([Wikipedia](https://en.wikipedia.org/wiki/Orbital_ring)). A ring can be set
+  to that mode instead of being fixed to the stars: its node is a longitude
+  east of the observer, it holds still in your sky, and J2 does not apply.
+- **Stations and elevator cables.** Ground-fixed rings can carry stations,
+  evenly spaced from the node, each a diffuse point source of area
+  stSize^2, with an elevator cable hanging straight down from each to the
+  ground, modelled as a line like the ring. Earth's shadow climbs the cables
+  from the bottom after sunset. Sizes are inputs; none are published.
 - **Where it can be seen.** An equatorial ring sets below the horizon beyond
   latitude acos(R_E / (R_E + alt)): 17 deg at 300 km, 40 deg at 2,000 km,
   63 deg at 7,500 km.
@@ -354,7 +364,8 @@ python3 export_ring_stars.py    # writes docs/stars.js
 bun test                        # tests/rings.test.js
 ```
 
-They agree to about 1e-13 degrees across 15 cases. The ring page loads
+They agree to about 1e-13 degrees across 21 cases, including ground-fixed
+rings with stations and cables. The ring page loads
 `docs/stars.js` (the star catalog alone, about 190 kB) instead of `data.js`.
 
 The older Streamlit version needs Python running on a server:

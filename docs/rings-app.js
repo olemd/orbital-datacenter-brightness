@@ -28,21 +28,41 @@
   // so the curve and table read without colour vision.
   var RING_COLORS = ["#ff9a3c", "#7ab8ff", "#7fd99a", "#f28bd0", "#e8d36a", "#b9a4ff"];
   var RING_DASH = ["", "7 3", "2 3", "9 3 2 3", "4 4", "1 2"];
+  // Editor fields. mode says which kind of ring shows the field: "sky" for
+  // star-fixed, "ground" for ground-fixed (Birch), or both if omitted.
   var FIELDS = [
     { k: "alt", label: "Altitude", unit: "km", step: 50 },
     { k: "inc", label: "Inclination", unit: "°", step: 1 },
-    { k: "raan", label: "Node RA", unit: "°", step: 5 },
+    { k: "raan", label: "Node RA", unit: "°", step: 5, mode: "sky",
+      title: "Right ascension of the ascending node: where the ring crosses the celestial " +
+        "equator going north. Has no effect on an equatorial ring." },
+    { k: "lon", label: "Node, east of you", unit: "° longitude", step: 5, mode: "ground",
+      title: "Where the ring crosses the equator going north, as degrees of longitude east of " +
+        "you (negative for west). The first station sits there. Has no effect on an " +
+        "equatorial ring except to place the stations." },
     { k: "width", label: "Width", unit: "m", step: 10 },
-    { k: "albedo", label: "Albedo", unit: "", step: 0.05 }
+    { k: "albedo", label: "Albedo", unit: "", step: 0.05 },
+    { k: "stations", label: "Stations", unit: "", step: 1, mode: "ground",
+      title: "Stations spaced evenly around the ring, starting at the node. 0 for none." },
+    { k: "stSize", label: "Station size", unit: "m", step: 50, mode: "ground",
+      title: "Each station reflects like a diffuse surface this many metres square." },
+    { k: "cable", label: "Elevator cable", unit: "m thick", step: 1, mode: "ground",
+      title: "Thickness of the elevator cable hanging from each station to the ground. 0 for none." }
   ];
   function ring(alt, inc, raan) { return { alt: alt, inc: inc, raan: raan || 0, width: 100, albedo: 0.2 }; }
+  function birch(alt, inc, lon, stations) {
+    return { alt: alt, inc: inc, raan: 0, width: 100, albedo: 0.2, fix: 1, lon: lon,
+             stations: stations, stSize: 500, cable: 5 };
+  }
   var PRESETS = {
     mixed: { name: "Two equatorial and one tilted", rings: [ring(1000, 0), ring(3000, 0), ring(2000, 45, 0)] },
     one: { name: "One equatorial ring, 2,000 km", rings: [ring(2000, 0)] },
     stack: { name: "Equatorial stack: 500 to 20,000 km",
              rings: [ring(500, 0), ring(2000, 0), ring(5000, 0), ring(20000, 0)] },
     polar: { name: "Equatorial and polar", rings: [ring(2000, 0), ring(2000, 90, 0)] },
-    tilted: { name: "Crossed pair at 30°", rings: [ring(3000, 30, 0), ring(3000, 30, 180)] }
+    tilted: { name: "Crossed pair at 30°", rings: [ring(3000, 30, 0), ring(3000, 30, 180)] },
+    birch: { name: "Birch network: ground-fixed, with stations",
+             rings: [birch(1000, 0, 20, 8), birch(1000, 60, 20, 6), birch(1000, 90, -15, 6)] }
   };
 
   function $(id) { return document.getElementById(id); }
@@ -62,7 +82,8 @@
   }
   function fatal(msg) { var f = $("fatal"); f.textContent = msg; f.hidden = false; }
   function ringName(sp) {
-    return fmt(sp.alt) + " km, " + (sp.inc === 0 ? "equatorial" : Math.round(sp.inc) + "° tilt");
+    return fmt(sp.alt) + " km, " + (sp.inc === 0 ? "equatorial" : Math.round(sp.inc) + "° tilt") +
+      (sp.fix ? ", ground-fixed" : "");
   }
 
   // ------------------------------------------------------------- state
@@ -88,11 +109,14 @@
     if ((v = num("az", 0, 360)) !== null) { S.az = v; autoAim = false; }
     if (/^\d{4}-\d{2}-\d{2}$/.test(q.ep || "")) S.epoch = q.ep;
     if (q.pr === "0" || q.pr === "1") S.prec = q.pr === "1";
-    // r=alt,inc,raan,width,albedo;...  every value clamped by RG.sanitize
+    // r=alt,inc,raan,width,albedo[,fix,lon,stations,stSize,cable];...
+    // every value clamped by RG.sanitize; missing trailing fields (older
+    // links) take RG.DEFAULTS
     if (q.r) {
       var rs = q.r.split(";").slice(0, MAX_RINGS).map(function (t) {
         var f = t.split(",").map(Number);
-        return RG.sanitize({ alt: f[0], inc: f[1], raan: f[2], width: f[3], albedo: f[4] });
+        return RG.sanitize({ alt: f[0], inc: f[1], raan: f[2], width: f[3], albedo: f[4],
+                             fix: f[5], lon: f[6], stations: f[7], stSize: f[8], cable: f[9] });
       });
       if (rs.length) S.rings = rs;
     }
@@ -103,7 +127,8 @@
     clearTimeout(hashTimer);
     hashTimer = setTimeout(function () {
       var r = S.rings.map(function (sp) {
-        return [sp.alt, sp.inc, sp.raan, sp.width, sp.albedo].join(",");
+        return [sp.alt, sp.inc, sp.raan, sp.width, sp.albedo,
+                sp.fix, sp.lon, sp.stations, sp.stSize, sp.cable].join(",");
       }).join(";");
       var s = "lat=" + S.lat + "&date=" + S.date + "&t=" + Math.round(S.t) + "&b=" + S.bortle +
         "&r=" + r + "&ep=" + S.epoch + "&pr=" + (S.prec ? 1 : 0) + "&az=" + Math.round(S.az) + "&el=" + Math.round(S.el) + "&fov=" + Math.round(S.fov);
@@ -148,9 +173,10 @@
   }
   function lstNow() { return N.ref + S.t / 60.0; }
 
-  // Node drift of ring i at local solar time lst on the night's date.
+  // Rotation of ring i about the pole at local solar time lst: J2 drift for
+  // a star-fixed ring, turning with the Earth for a ground-fixed one.
   function dNode(i, lst) {
-    return S.prec ? RG.nodeShift(S.rings[i], S.date, lst, S.epoch) : 0;
+    return RG.nodeOffset(S.rings[i], S.date, lst, S.epoch, S.prec);
   }
 
   // ------------------------------------------------------ the instant
@@ -176,6 +202,7 @@
   var glOK = !!gl, floatOK = false, W = 1, H = 1, dpr = 1;
   var progSky, progPts, progRing, progTone, vaoTri, bufTri, fbo = null, fboTex = null;
   var bufRing = null, nRing = 0, bufStar = null, bufStarCol = null, nStar = 0;
+  var bufStation = null, nStation = 0;
 
   var GLSL_COMMON = [
     "const float DEG = 0.017453292519943295;",
@@ -331,6 +358,7 @@
     gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.bindVertexArray(null);
     bufRing = gl.createBuffer(); bufStar = gl.createBuffer(); bufStarCol = gl.createBuffer();
+    bufStation = gl.createBuffer();
   }
 
   function makeFBO() {
@@ -348,7 +376,7 @@
 
   function uploadPoints() {
     if (!glOK || !R) return;
-    // all rings share one buffer: they are drawn the same way, in white
+    // all rings and cables share one buffer: they are drawn the same way, in white
     var total = 0;
     R.rings.forEach(function (r) { total += r.draw.length; });
     var all = new Float32Array(total), off = 0;
@@ -356,6 +384,14 @@
     gl.bindBuffer(gl.ARRAY_BUFFER, bufRing);
     gl.bufferData(gl.ARRAY_BUFFER, all, gl.DYNAMIC_DRAW);
     nRing = total / 5;                     // [east, north, up, V, width]
+    // stations are point sources, drawn like stars: [east, north, up, V]
+    var sTotal = 0;
+    R.rings.forEach(function (r) { sTotal += r.stationDraw.length; });
+    var sAll = new Float32Array(sTotal), sOff = 0;
+    R.rings.forEach(function (r) { sAll.set(r.stationDraw, sOff); sOff += r.stationDraw.length; });
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufStation);
+    gl.bufferData(gl.ARRAY_BUFFER, sAll, gl.DYNAMIC_DRAW);
+    nStation = sTotal / 4;
     var s = R.st.draw;
     gl.bindBuffer(gl.ARRAY_BUFFER, bufStar);
     gl.bufferData(gl.ARRAY_BUFFER, s.a.subarray(0, s.n), gl.DYNAMIC_DRAW);
@@ -419,6 +455,16 @@
       gl.drawArrays(gl.POINTS, 0, nStar);
       gl.disableVertexAttribArray(2);
     }
+    if (nStation) {
+      // same point-source rendering as the stars, in the rings' white
+      gl.uniform1f(u.uSigma, SIGMA_RING * sigmaK);
+      gl.uniform1f(u.uFluxK, exposure / PIX_REF / (2 * Math.PI * SIGMA_RING * SIGMA_RING));
+      gl.bindBuffer(gl.ARRAY_BUFFER, bufStation);
+      gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 16, 0);
+      gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 16, 12);
+      gl.vertexAttrib3f(2, 0.95, 0.97, 1.0);
+      gl.drawArrays(gl.POINTS, 0, nStation);
+    }
 
     // Stars keep the video's peak brightness at every zoom (see PIX_REF).
     // A line has to follow the same rule, or zooming out would crowd more
@@ -467,34 +513,49 @@
   }
 
   // Each ring's path in its colour and dash: solid where sunlit, dotted where
-  // in Earth's shadow, numbered at its highest point. This is a guide to
-  // where the ring is, drawn on top of the sky, not part of the simulation.
+  // in Earth's shadow, numbered at its highest point. Cables get the same
+  // treatment and stations a small circle, filled when sunlit. This is a
+  // guide to where things are, drawn on top of the sky, not part of the
+  // simulation.
   function drawPaths(cam, fs) {
     if (!R.paths) return;
     R.paths.forEach(function (p, i) {
       var col = RING_COLORS[i % RING_COLORS.length], top = null;
-      [1, 0].forEach(function (litPass) {
-        octx.strokeStyle = col;
-        // faint where sunlit, so it does not tint the simulated ring under it
-        octx.globalAlpha = litPass ? 0.22 : 0.45;
-        octx.lineWidth = 1.1 * dpr;
-        octx.setLineDash(litPass
-          ? (RING_DASH[i] ? RING_DASH[i].split(" ").map(function (v) { return v * dpr * 1.5; }) : [])
-          : [1 * dpr, 4 * dpr]);
+      function stroke(arr, closed, litPass) {
         octx.beginPath();
-        var prev = null;
-        for (var k = 0; k <= p.length; k += 4) {
-          var j = k % p.length;                      // close the loop
-          var ok = !isNaN(p[j]) && p[j + 3] === litPass;
-          var q = ok ? project(cam, [p[j], p[j + 1], p[j + 2]]) : null;
+        var prev = null, last = closed ? arr.length : arr.length - 4;
+        for (var k = 0; k <= last; k += 4) {
+          var j = k % arr.length;
+          var ok = !isNaN(arr[j]) && arr[j + 3] === litPass;
+          var q = ok ? project(cam, [arr[j], arr[j + 1], arr[j + 2]]) : null;
           if (q && prev && Math.abs(q[0] - prev[0]) < W / 2) octx.lineTo(q[0], q[1]);
           else if (q) octx.moveTo(q[0], q[1]);
           prev = q;
-          if (q && (!top || p[j + 2] > top.u)) top = { u: p[j + 2], q: q };
+          if (closed && q && (!top || arr[j + 2] > top.u)) top = { u: arr[j + 2], q: q };
         }
         octx.stroke();
+      }
+      octx.strokeStyle = col;
+      octx.lineWidth = 1.1 * dpr;
+      [1, 0].forEach(function (litPass) {
+        // faint where sunlit, so it does not tint the simulated ring under it
+        octx.globalAlpha = litPass ? 0.22 : 0.45;
+        octx.setLineDash(litPass
+          ? (RING_DASH[i] ? RING_DASH[i].split(" ").map(function (v) { return v * dpr * 1.5; }) : [])
+          : [1 * dpr, 4 * dpr]);
+        stroke(p.ring, true, litPass);
+        p.cables.forEach(function (c) { stroke(c, false, litPass); });
       });
-      octx.globalAlpha = 1; octx.setLineDash([]);
+      octx.setLineDash([]);
+      for (var k = 0; k < p.stations.length; k += 4) {
+        if (isNaN(p.stations[k])) continue;
+        var q = project(cam, [p.stations[k], p.stations[k + 1], p.stations[k + 2]]);
+        if (!q) continue;
+        octx.globalAlpha = 0.7;
+        octx.beginPath(); octx.arc(q[0], q[1], 5 * dpr, 0, 2 * Math.PI); octx.stroke();
+        if (p.stations[k + 3]) { octx.globalAlpha = 0.25; octx.fillStyle = col; octx.fill(); }
+      }
+      octx.globalAlpha = 1;
       if (top && top.q[0] > fs && top.q[0] < W - fs && top.q[1] > fs && top.q[1] < H - fs) {
         octx.lineWidth = 3 * dpr; octx.strokeStyle = "rgba(6,8,14,0.85)";
         octx.strokeText(String(i + 1), top.q[0], top.q[1] - fs - 3 * dpr);
@@ -573,7 +634,18 @@
     var tb = $("ringRows"), rows = [], lst = lstNow();
     R.rings.forEach(function (r, i) {
       var sp = S.rings[i], col = RING_COLORS[i % RING_COLORS.length], status = ringStatus(sp, r);
-      if (S.prec && sp.inc !== 0 && sp.inc !== 180) {
+      if (sp.fix) {
+        status += "; holds still over the ground";
+        if (r.stations.total) {
+          status += "; stations: " + r.stations.visible + " of " + r.stations.total + " visible" +
+            (r.stations.up > r.stations.visible ? " (" + r.stations.up + " above the horizon)" : "") +
+            (r.stationBest !== null ? ", brightest " + r.stationBest.toFixed(1) : "");
+        }
+        if (r.cable.up > 0) {
+          status += "; cables: " + Math.round(r.cable.visible) + "° of " + Math.round(r.cable.up) +
+            "° visible" + (r.cable.lit < r.cable.up - 0.5 ? ", lower parts in Earth's shadow" : "");
+        }
+      } else if (S.prec && sp.inc !== 0 && sp.inc !== 180) {
         status += "; node now at RA " + Math.round(mod(sp.raan + dNode(i, lst), 360)) + "°, drifting " +
           Math.abs(RG.nodeRate(sp)).toFixed(2) + "°/day " + (RG.nodeRate(sp) < 0 ? "west" : "east");
       }
@@ -752,7 +824,26 @@
       fsEl.appendChild(lg);
       var grid = document.createElement("div");
       grid.className = "rgrid";
+      var modeId = "ring" + i + "_fix";
+      var mlab = document.createElement("label");
+      mlab.htmlFor = modeId; mlab.className = "small"; mlab.textContent = "Fixed to";
+      var msel = document.createElement("select");
+      msel.id = modeId;
+      [["0", "the stars"], ["1", "the ground (Birch)"]].forEach(function (o) {
+        var op = document.createElement("option"); op.value = o[0]; op.textContent = o[1]; msel.appendChild(op);
+      });
+      msel.value = String(sp.fix);
+      msel.addEventListener("change", function () {
+        var next = Object.assign({}, S.rings[i], { fix: Number(msel.value) });
+        // a new ground-fixed ring gets stations, so the mode shows what it is for
+        if (next.fix && !S.rings[i].fix && !next.stations) next.stations = 4;
+        S.rings[i] = RG.sanitize(next);
+        ringsChanged(true);
+        $(modeId).focus();
+      });
+      grid.appendChild(mlab); grid.appendChild(msel);
       FIELDS.forEach(function (f) {
+        if (f.mode && (f.mode === "ground") !== !!sp.fix) return;
         var id = "ring" + i + "_" + f.k;
         var lab = document.createElement("label");
         lab.htmlFor = id; lab.className = "small";
@@ -761,17 +852,14 @@
         inp.type = "number"; inp.id = id; inp.step = f.step;
         inp.min = RG.LIMITS[f.k][0]; inp.max = RG.LIMITS[f.k][1];
         inp.value = sp[f.k];
-        if (f.k === "raan") {
-          inp.disabled = sp.inc === 0;
-          inp.title = "Right ascension of the ascending node: where the ring crosses the celestial " +
-            "equator going north. Has no effect on an equatorial ring.";
-        }
+        if (f.title) inp.title = f.title;
+        if (f.k === "raan") inp.disabled = sp.inc === 0;
         inp.addEventListener("change", function () {
           var next = Object.assign({}, S.rings[i]);
           next[f.k] = Number(inp.value);
           S.rings[i] = RG.sanitize(next);
           inp.value = S.rings[i][f.k];
-          if (f.k === "inc") $("ring" + i + "_raan").disabled = S.rings[i].inc === 0;
+          if (f.k === "inc" && $("ring" + i + "_raan")) $("ring" + i + "_raan").disabled = S.rings[i].inc === 0;
           ringsChanged(false);
         });
         grid.appendChild(lab); grid.appendChild(inp);

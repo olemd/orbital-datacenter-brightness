@@ -163,7 +163,8 @@
         <button id="btnGeo" title="Uses your latitude only. Nothing leaves your browser.">Use my location</button>
       </div>
       <div class="small" id="latHelp" style="margin-top:6px">Negative for south. Longitude does not
-        matter: with times given as sun time, the stars and the rings depend only on latitude.</div>
+        matter: with times given as sun time, the stars depend only on latitude, and ground-fixed
+        rings are placed by longitude relative to you.</div>
     </div>
 
     <div class="box">
@@ -181,8 +182,10 @@
         <label class="small" for="epoch">Node RAs are as of</label>
         <input type="date" id="epoch">
       </div>
-      <div class="small" id="precHelp" style="margin-top:6px">The Earth's bulge slowly turns a tilted
-        ring's plane, by degrees per day for low rings. Rates assume the ring moves at orbital speed.</div>
+      <div class="small" id="precHelp" style="margin-top:6px">For rings fixed to the stars: the Earth's
+        bulge slowly turns a tilted ring's plane, by degrees per day for low rings. Rates assume the ring
+        moves at orbital speed. Rings fixed to the ground are turned once a day on purpose and do not
+        drift.</div>
     </div>
 
     <div class="box">
@@ -238,6 +241,20 @@
   evening sky to the morning sky. A Birch ring's rotor moves faster than orbital speed and would
   precess at a different rate, and a ring could be steered to hold its node, so you can turn this off.
   Equatorial and polar rings do not drift in any way you could see.</p>
+  <p><b>Fixed to the stars, or to the ground.</b> Paul Birch's orbital rings are not left to drift:
+  each is made to precess once a day so that it "will hover above any meridian selected on the surface
+  of Earth", with stations that "stay in one place above some designated point on Earth"
+  (<a href="https://en.wikipedia.org/wiki/Orbital_ring">Wikipedia</a>). A ring fixed to the ground
+  is that design. It holds still in your sky all night, and only the Earth's shadow moves along it. You
+  place it by where it crosses the equator, in degrees of longitude east of you. A ring fixed to the
+  stars is a passive ring instead, and it swings across the sky with the stars. An equatorial ring
+  looks the same either way.</p>
+  <p><b>Stations and elevator cables.</b> A ground-fixed ring can carry stations, spaced evenly
+  around it from the node, with an elevator cable hanging straight down from each to the ground. Each
+  station is drawn as a point of light the size of a diffuse surface of the given width. Each cable is
+  treated like the ring, as a line of the given thickness. Its lower part falls into the Earth's shadow
+  first after sunset, so the lit part shrinks upward through the evening. No sizes for these are
+  published, so treat them as yours to choose.</p>
   <p><b>Brightness.</b> Each piece of ring is treated as a diffuse reflector of its own area, using the
   same Lambertian formula the satellite page uses (Boley, Lawler &amp; Rein 2026,
   <a href="https://arxiv.org/abs/2608.02757">arXiv:2608.02757</a>, equation 2). Real structures would
