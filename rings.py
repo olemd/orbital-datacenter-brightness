@@ -37,30 +37,52 @@ EYE = DEG / 60.0  # naked-eye resolution, 1 arcminute
 MIN_SIN_BETA = 0.05  # cap the along-the-line pile-up
 FINE_SPACING, COARSE_SPACING = 0.025 * DEG, 0.25 * DEG
 MIN_SAMPLES, MAX_SAMPLES = 3600, 600000
+# Elevator cables: from CABLE_FOOT km up to the ring, every CABLE_STEP km.
+CABLE_FOOT, CABLE_STEP, CABLE_STEP_COARSE = 0.5, 0.25, 5.0
+CABLE_MIN, CABLE_MAX = 200, 8000
 
+# fix: 0 star-fixed, 1 ground-fixed (Birch). lon: ground-fixed node, degrees
+# east of the observer. stations, stSize (m) and cable (thickness, m; 0 for
+# none) apply to ground-fixed rings only. See docs/rings.js.
 LIMITS = dict(
     alt=(100.0, 40000.0),
     inc=(0.0, 180.0),
     raan=(0.0, 360.0),
     width=(0.1, 100000.0),
     albedo=(0.01, 1.0),
+    fix=(0.0, 1.0),
+    lon=(-180.0, 180.0),
+    stations=(0.0, 24.0),
+    stSize=(1.0, 20000.0),
+    cable=(0.0, 1000.0),
 )
+INTEGER = ("fix", "stations")
+DEFAULTS = dict(fix=0.0, lon=0.0, stations=0.0, stSize=500.0, cable=2.0)
 
 
 def sanitize(spec):
-    """Clamp a ring spec to LIMITS."""
+    """Clamp a ring spec to LIMITS, as docs/rings.js sanitize() does."""
     out = {}
     for k, (lo, hi) in LIMITS.items():
+        raw = spec.get(k)
         try:
-            v = float(spec.get(k, lo))
+            v = float(raw)
         except (TypeError, ValueError):
-            v = lo
-        out[k] = float(np.clip(v, lo, hi)) if np.isfinite(v) else lo
+            v = float("nan")
+        if (raw is None or raw == "" or not np.isfinite(v)) and k in DEFAULTS:
+            v = DEFAULTS[k]
+        v = float(np.clip(v, lo, hi)) if np.isfinite(v) else lo
+        # JavaScript Math.round, not Python's round-half-to-even
+        out[k] = float(np.floor(v + 0.5)) if k in INTEGER else v
     return out
 
 
 def build(spec, ra_sun_hr, coarse=False):
-    """Sample one ring. ra_sun_hr places the node against the stars."""
+    """
+    Sample one ring, and for a ground-fixed ring its stations and cables.
+    Star-fixed: node at longitude RAAN - RA_sun in the Sun-fixed frame.
+    Ground-fixed: node at `lon`, turned to the observer by node_offset.
+    """
     sp = sanitize(spec)
     a = R_E + sp["alt"]
     spacing = COARSE_SPACING if coarse else FINE_SPACING
@@ -71,7 +93,7 @@ def build(spec, ra_sun_hr, coarse=False):
             )
         )
     )
-    lam = (sp["raan"] - 15.0 * ra_sun_hr) * DEG
+    lam = (sp["lon"] if sp["fix"] else sp["raan"] - 15.0 * ra_sun_hr) * DEG
     inc = sp["inc"] * DEG
     node = np.array([np.cos(lam), np.sin(lam), 0.0])
     zxn = np.array([-node[1], node[0], 0.0])
@@ -79,6 +101,22 @@ def build(spec, ra_sun_hr, coarse=False):
     m = np.cross(h, node)
     th = 2 * np.pi * np.arange(n) / n
     c, s = np.cos(th)[:, None], np.sin(th)[:, None]
+
+    ns = int(sp["stations"]) if sp["fix"] else 0
+    tq = 2 * np.pi * np.arange(ns) / ns if ns else np.zeros(0)
+    u = np.cos(tq)[:, None] * node + np.sin(tq)[:, None] * m  # station directions
+    step = CABLE_STEP_COARSE if coarse else CABLE_STEP
+    nc = 0
+    if ns and sp["cable"] > 0:
+        nc = int(
+            round(
+                np.clip(np.ceil((sp["alt"] - CABLE_FOOT) / step), CABLE_MIN, CABLE_MAX)
+            )
+        )
+    cds = (sp["alt"] - CABLE_FOOT) / nc if nc else 0.0
+    radii = R_E + CABLE_FOOT + (np.arange(nc) + 0.5) * cds
+    cpos = (u[:, None, :] * radii[None, :, None]).reshape(-1, 3)
+    ctan = np.repeat(u, nc, axis=0)
     return dict(
         spec=sp,
         a=a,
@@ -86,6 +124,8 @@ def build(spec, ra_sun_hr, coarse=False):
         ds=2 * np.pi * a / n,
         pos=a * (c * node + s * m),
         tan=-s * node + c * m,
+        stations=a * u,
+        cable=dict(n=ns * nc, per_cable=nc, ds=cds, pos=cpos, tan=ctan),
     )
 
 
@@ -109,6 +149,18 @@ def node_shift(spec, date, lst_hr, epoch):
     return node_rate(spec) * days
 
 
+def node_offset(spec, date, lst_hr, epoch, prec):
+    """
+    Rotation about the pole to pass to evaluate as d_node, degrees.
+    Ground-fixed: turn with the Earth (driven, so J2 does not apply).
+    Star-fixed: the J2 drift if prec.
+    """
+    sp = sanitize(spec)
+    if sp["fix"]:
+        return (lst_hr - 12.0) * 15.0
+    return node_shift(sp, date, lst_hr, epoch) if prec else 0.0
+
+
 def _rot_z(v, ang):
     c, s = np.cos(ang), np.sin(ang)
     return np.array([c * v[0] - s * v[1], s * v[0] + c * v[1], v[2]])
@@ -126,38 +178,9 @@ def piece_mag(albedo, L_m, w_m, d_km, phi, X):
     )
 
 
-def evaluate(ring, lat, lst, dec, sqm_art=None, d_node=0.0):
-    """
-    One ring at one instant: arcs on the sky in degrees (up, lit, visible)
-    and the magnitude of the brightest visible one-arcminute patch (best,
-    or None). Same definitions as docs/rings.js evaluate().
-    """
-    r_obs, up, east, north = L.observer(lat, lst)
-    s = L.sun_dir(dec)
-    if d_node:
-        ang = -d_node * DEG
-        r_obs, up, east, north, s = (
-            _rot_z(v, ang) for v in (r_obs, up, east, north, s)
-        )
-    sp, P, Tn = ring["spec"], ring["pos"], ring["tan"]
-
-    rel = P - r_obs
-    above = rel @ up > 0
-    P, Tn, rel = P[above], Tn[above], rel[above]
-    d = np.linalg.norm(rel, axis=1)
-    v = rel / d[:, None]
-    sin_beta = np.maximum(np.linalg.norm(np.cross(v, Tn), axis=1), MIN_SIN_BETA)
-    ang = ring["ds"] * sin_beta / d / DEG
-    lit = L.sunlit(P, s)
-
-    alt = np.arcsin(np.clip(v @ up, -1, 1))
-    az = np.arctan2(v @ east, v @ north)
-    phi = np.arccos(np.clip(-(v @ s), -1, 1))
-    X = L.airmass(alt)
-    L_eye = d * 1e3 * EYE / sin_beta
-    w_eye = np.minimum(sp["width"], d * 1e3 * EYE)
-    V_eye = piece_mag(sp["albedo"], L_eye, w_eye, d, phi, X)
-
+def _sky_limit(alt, az, frame, sqm_art):
+    """Naked-eye limit against the local sky at each (alt, az)."""
+    r_obs, up, east, north, s = frame
     sun_el = float(np.degrees(np.arcsin(np.clip(s @ up, -1, 1))))
     sun_az = float(np.arctan2(s @ east, s @ north))
     saved = SK.SQM_ART
@@ -166,14 +189,87 @@ def evaluate(ring, lat, lst, dec, sqm_art=None, d_node=0.0):
         sky, _ = SK.brightness(alt, az, sun_el, sun_az)
     finally:
         SK.SQM_ART = saved
-    vis = lit & (V_eye < T.limiting_mag(sky))
+    return T.limiting_mag(sky)
+
+
+def _scan_line(P, Tn, ds, w, albedo, frame, sqm_art):
+    """Arcs (deg) above the horizon, lit and visible, and the best patch."""
+    r_obs, up, east, north, s = frame
+    rel = P - r_obs
+    above = rel @ up > 0
+    P, Tn, rel = P[above], Tn[above], rel[above]
+    d = np.linalg.norm(rel, axis=1)
+    v = rel / d[:, None]
+    sin_beta = np.maximum(np.linalg.norm(np.cross(v, Tn), axis=1), MIN_SIN_BETA)
+    ang = ds * sin_beta / d / DEG
+    lit = L.sunlit(P, s)
+    alt = np.arcsin(np.clip(v @ up, -1, 1))
+    az = np.arctan2(v @ east, v @ north)
+    phi = np.arccos(np.clip(-(v @ s), -1, 1))
+    X = L.airmass(alt)
+    L_eye = d * 1e3 * EYE / sin_beta
+    w_eye = np.minimum(w, d * 1e3 * EYE)
+    V_eye = piece_mag(albedo, L_eye, w_eye, d, phi, X)
+    vis = lit & (V_eye < _sky_limit(alt, az, frame, sqm_art))
     return dict(
         up=float(ang.sum()),
         lit=float(ang[lit].sum()),
         visible=float(ang[vis].sum()),
         best=float(V_eye[vis].min()) if vis.any() else None,
-        sun_el=sun_el,
     )
+
+
+def evaluate(ring, lat, lst, dec, sqm_art=None, d_node=0.0):
+    """
+    One ring at one instant: arcs on the sky in degrees (up, lit, visible),
+    the brightest visible one-arcminute patch (best, or None), the same for
+    the elevator cables (cable), and station counts (stations: total, up,
+    lit, visible) with the brightest visible station (station_best).
+    Same definitions as docs/rings.js evaluate().
+    """
+    r_obs, up, east, north = L.observer(lat, lst)
+    s = L.sun_dir(dec)
+    if d_node:
+        ang = -d_node * DEG
+        r_obs, up, east, north, s = (
+            _rot_z(v, ang) for v in (r_obs, up, east, north, s)
+        )
+    frame = (r_obs, up, east, north, s)
+    sp = ring["spec"]
+    out = _scan_line(
+        ring["pos"], ring["tan"], ring["ds"], sp["width"], sp["albedo"], frame, sqm_art
+    )
+    C = ring["cable"]
+    out["cable"] = (
+        _scan_line(
+            C["pos"], C["tan"], C["ds"], sp["cable"], sp["albedo"], frame, sqm_art
+        )
+        if C["n"]
+        else dict(up=0.0, lit=0.0, visible=0.0, best=None)
+    )
+
+    St = ring["stations"]
+    st = dict(total=len(St), up=0, lit=0, visible=0)
+    best = None
+    if len(St):
+        rel = St - r_obs
+        d = np.linalg.norm(rel, axis=1)
+        v = rel / d[:, None]
+        above = v @ up > 0
+        lit = above & L.sunlit(St, s)
+        alt = np.arcsin(np.clip(v @ up, -1, 1))
+        az = np.arctan2(v @ east, v @ north)
+        phi = np.arccos(np.clip(-(v @ s), -1, 1))
+        V = piece_mag(sp["albedo"], sp["stSize"], sp["stSize"], d, phi, L.airmass(alt))
+        vis = lit & (V < _sky_limit(alt, az, frame, sqm_art))
+        st.update(up=int(above.sum()), lit=int(lit.sum()), visible=int(vis.sum()))
+        best = float(V[vis].min()) if vis.any() else None
+    out.update(
+        stations=st,
+        station_best=best,
+        sun_el=float(np.degrees(np.arcsin(np.clip(s @ up, -1, 1)))),
+    )
+    return out
 
 
 def equatorial_max_lat(alt_km):

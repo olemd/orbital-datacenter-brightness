@@ -1,9 +1,11 @@
 """
 Check the browser ring physics (docs/rings.js) against rings.py.
 
-Runs the same cases through both, including the J2 node drift computed from
-dates on each side, and compares the arcs above the horizon, in sunlight and
-visible, and the brightest visible patch. Both sample the ring at the same
+Runs the same cases through both, including the node rotation computed from
+dates on each side (J2 drift for star-fixed rings, turning with the Earth for
+ground-fixed ones), and compares the arcs above the horizon, in sunlight and
+visible, and the brightest visible patch, for the ring and for its elevator
+cables, and the station counts and brightest station. Both sample the ring at the same
 points, so they should agree to rounding.
 
     python3 validate_rings.py        # needs node on the PATH
@@ -30,6 +32,19 @@ R = lambda alt, inc=0.0, raan=0.0, width=100.0, albedo=0.2: dict(
     alt=alt, inc=inc, raan=raan, width=width, albedo=albedo
 )
 
+
+def G(alt, inc=0.0, lon=0.0, stations=4, st_size=500.0, cable=5.0, width=100.0):
+    """A ground-fixed (Birch) ring with stations and cables."""
+    return dict(
+        R(alt, inc, 0.0, width),
+        fix=1,
+        lon=lon,
+        stations=stations,
+        stSize=st_size,
+        cable=cable,
+    )
+
+
 CASES = [
     dict(ring=R(1000), date=(2026, 9, 22), lat=20.0, mins=120),
     dict(ring=R(3000), date=(2026, 9, 22), lat=20.0, mins=120),
@@ -48,6 +63,13 @@ CASES = [
     dict(ring=R(20000), date=(2026, 9, 22), lat=-33.9, mins=60, bortle=8),
     dict(ring=R(300, width=50000), date=(2026, 9, 22), lat=5.0, mins=40),  # wide band
     dict(ring=R(10000, 30, 120, albedo=0.05), date=(2027, 1, 15), lat=51.5, mins=30),
+    # ground-fixed rings, with stations and elevator cables
+    dict(ring=G(2000, 0, 15, 6), date=(2026, 9, 22), lat=10.0, mins=30),
+    dict(ring=G(2000, 0, 15, 6), date=(2026, 9, 22), lat=10.0, mins=120),  # in shadow
+    dict(ring=G(1000, 60, 80, 4), date=(2026, 12, 21), lat=37.2, mins=40, prec=True),
+    dict(ring=G(1500, 90, 10, 8, 2000, 20), date=(2026, 6, 21), lat=55.0, mins=60),
+    dict(ring=G(800, 30, 0, 3, cable=0), date=(2026, 3, 20), lat=-20.0, mins=50),
+    dict(ring=G(3000, 120, 40, 12), date=(2026, 9, 22), lat=25.0, mins=600, bortle=4),
 ]
 
 
@@ -56,9 +78,7 @@ def python_side():
     for c in CASES:
         dec, ra = solar.sun(*c["date"])
         lst = solar.sunset_lst(c["lat"], dec) + c["mins"] / 60.0
-        d_node = (
-            RG.node_shift(c["ring"], c["date"], lst, EPOCH) if c.get("prec") else 0.0
-        )
+        d_node = RG.node_offset(c["ring"], c["date"], lst, EPOCH, bool(c.get("prec")))
         art = T.BORTLE[c.get("bortle", 1)]
         r = RG.evaluate(RG.build(c["ring"], ra), c["lat"], lst, dec, art, d_node)
         r.update(case=c, lst=lst, dec=dec, ra=ra, art=art, d_node=d_node)
@@ -74,10 +94,11 @@ const cases = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
 const iso = d => d.map((x, i) => i ? String(x).padStart(2, "0") : String(x)).join("-");
 const out = cases.map(r => {
   const c = r.case;
-  const dNode = c.prec ? RG.nodeShift(c.ring, iso(c.date), r.lst, iso(r.epoch)) : 0;
+  const dNode = RG.nodeOffset(c.ring, iso(c.date), r.lst, iso(r.epoch), !!c.prec);
   const e = RG.evaluate(RG.build(c.ring, r.ra, false),
                         { lat: c.lat, lst: r.lst, dec: r.dec, art: r.art, dNode: dNode });
-  return { up: e.up, lit: e.lit, visible: e.visible, best: e.best, d_node: dNode, sun_el: e.sunEl };
+  return { up: e.up, lit: e.lit, visible: e.visible, best: e.best, d_node: dNode, sun_el: e.sunEl,
+           cable: e.cable, stations: e.stations, station_best: e.stationBest };
 });
 console.log(JSON.stringify(out));
 """
@@ -118,10 +139,11 @@ def main():
     )
     for p, j in zip(py, js):
         c, rg = p["case"], p["case"]["ring"]
-        tag = "%gkm i%g O%g w%g %04d-%02d-%02d %5.1f %3dmin%s%s" % (
+        tag = "%gkm i%g %s%g w%g %04d-%02d-%02d %5.1f %3dmin%s%s" % (
             rg["alt"],
             rg["inc"],
-            rg["raan"],
+            "L" if rg.get("fix") else "O",
+            rg.get("lon", 0) if rg.get("fix") else rg["raan"],
             rg["width"],
             *c["date"],
             c["lat"],
@@ -141,20 +163,48 @@ def main():
             bad += bool(flag)
             print("%-44s %-8s %10.4f %10.4f %9.1e%s" % (tag, k, p[k], j[k], diff, flag))
             tag = ""
-        a, b = p["best"], j["best"]
-        if (a is None) != (b is None) or (a is not None and abs(a - b) > MAX_MAG):
-            print("%-44s %-8s %10s %10s  <-- MISMATCH" % ("", "best", a, b))
-            bad += 1
-        else:
+        for k in ("up", "lit", "visible"):
+            diff = j["cable"][k] - p["cable"][k]
+            flag = "" if abs(diff) <= MAX_ARC else "  <-- MISMATCH"
+            bad += bool(flag)
+            if p["cable"]["up"] or j["cable"]["up"] or flag:
+                print(
+                    "%-44s %-8s %10.4f %10.4f %9.1e%s"
+                    % ("", "cable " + k, p["cable"][k], j["cable"][k], diff, flag)
+                )
+        if p["stations"] != j["stations"]:
             print(
-                "%-44s %-8s %10s %10s"
+                "%-44s %-8s %10s %10s  <-- MISMATCH"
+                % ("", "stations", p["stations"], j["stations"])
+            )
+            bad += 1
+        elif p["stations"]["total"]:
+            print(
+                "%-44s %-8s %21s"
                 % (
                     "",
-                    "best",
-                    "-" if a is None else "%.4f" % a,
-                    "-" if b is None else "%.4f" % b,
+                    "stations",
+                    "%(up)d up, %(lit)d lit, %(visible)d visible" % p["stations"],
                 )
             )
+        for name, a, b in (
+            ("best", p["best"], j["best"]),
+            ("cable best", p["cable"]["best"], j["cable"]["best"]),
+            ("st. best", p["station_best"], j["station_best"]),
+        ):
+            if (a is None) != (b is None) or (a is not None and abs(a - b) > MAX_MAG):
+                print("%-44s %-8s %10s %10s  <-- MISMATCH" % ("", name, a, b))
+                bad += 1
+            elif a is not None or name == "best":
+                print(
+                    "%-44s %-8s %10s %10s"
+                    % (
+                        "",
+                        name,
+                        "-" if a is None else "%.4f" % a,
+                        "-" if b is None else "%.4f" % b,
+                    )
+                )
     print("\n%d cases, %d mismatches" % (len(CASES), bad))
     sys.exit(1 if bad else 0)
 
