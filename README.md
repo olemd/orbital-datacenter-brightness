@@ -307,6 +307,34 @@ python3 export_web_data.py      # writes docs/data.js from lsm.build_sso
 python3 validate_web.py         # checks docs/physics.js against the Python
 ```
 
+## Orbital rings (this fork)
+
+`docs/rings.html` uses the same sky, stars and brightness model to show
+megastructure **orbital rings**, in the sense of Paul Birch: continuous bands
+around the Earth rather than swarms of satellites. You can set up to six rings,
+each with an altitude, inclination, node, width and albedo, and see them from
+any latitude, date and time, with Earth's shadow moving along them through the
+night. The satellite page is unchanged.
+
+- **Geometry.** Each ring is a circle of radius R_E + altitude. Its plane is
+  fixed against the stars: the node is a right ascension, placed into
+  `physics.js`'s Sun-fixed frame with the same transform the stars use. An
+  equatorial ring looks the same all night. A tilted ring swings across the sky
+  with the stars. Nodal precession is not modelled.
+- **Where it can be seen.** An equatorial ring sets below the horizon beyond
+  latitude acos(R_E / (R_E + alt)): 17 deg at 300 km, 40 deg at 2,000 km,
+  63 deg at 7,500 km.
+- **Brightness.** Each piece of ring uses Boley et al. eq 2 (the Lambertian
+  reflector in `lsm.observe`) with zeta = albedo x length x width. Shape,
+  materials and glints are not modelled.
+- **Visibility.** A ring counts as visible where a one-arcminute patch of it
+  beats the naked-eye limit against the local sky. That treats the patch as a
+  point source, which is conservative for a line.
+
+The ring physics is `docs/rings.js`, the page is `docs/rings-app.js`, and the
+tests run with `bun test` (`tests/rings.test.js`). Unlike the satellite page
+there is no Python reference implementation of the rings yet.
+
 The older Streamlit version needs Python running on a server:
 
 ```
@@ -339,6 +367,8 @@ table above are real, not sampling noise.
 | `raan_sensitivity.py` | how the counts move with the assumed plane spread |
 | `elevation.py` | the distribution of elevation angle, low sky against high |
 | `docs/` | the browser version: `index.html`, `app.js`, `physics.js`, `data.js` |
+| `docs/rings.html`, `rings.js`, `rings-app.js` | the orbital-ring page and its physics (this fork) |
+| `tests/rings.test.js` | tests for the ring physics, `bun test` |
 | `export_web_data.py` | writes `docs/data.js`, the exact constellation and star catalog |
 | `validate_web.py` | checks the browser physics against the Python, count for count |
 | `app.py` | the older Streamlit version, which needs a Python server |
