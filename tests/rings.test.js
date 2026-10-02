@@ -86,9 +86,41 @@ test("the path marks shadowed samples and breaks below the horizon", () => {
 test("visible samples are packed for drawing with unit directions", () => {
   const ring = RG.build(RING, RA_SUN, false);
   const r = RG.evaluate(ring, Object.assign({ lat: 20, local: true }, NIGHT));
-  expect(r.draw.length % 4).toBe(0);
+  expect(r.draw.length % 5).toBe(0);
   expect(r.draw.length).toBeGreaterThan(0);
   const n = Math.hypot(r.draw[0], r.draw[1], r.draw[2]);
   expect(n).toBeCloseTo(1, 4);
+  // angular width: 100 m seen from at least 2,000 km is under 5e-5 rad
+  expect(r.draw[4]).toBeGreaterThan(0);
+  expect(r.draw[4]).toBeLessThan(100 / 2000e3);
   expect(P.limitingMag(21.75)).toBeGreaterThan(6);    // sanity: shared sky model loaded
+});
+
+test("J2 node drift matches the sun-synchronous rate", () => {
+  // lsm.sso_inclination: the tilt whose drift is one turn per year
+  const R_E = 6378.137, MU = 398600.4418, J2 = 1.08263e-3, alt = 800;
+  const a = R_E + alt, n = Math.sqrt(MU / a ** 3), wp = 2 * Math.PI / (365.2422 * 86400);
+  const inc = Math.acos(-2 * wp * a * a / (3 * J2 * n * R_E * R_E)) * 180 / Math.PI;
+  const rate = RG.nodeRate({ alt: alt, inc: inc, raan: 0, width: 1, albedo: 0.2 });
+  expect(rate).toBeCloseTo(360 / 365.2422, 6);
+  // prograde rings regress, polar and equatorial rings do not drift in effect
+  expect(RG.nodeRate(Object.assign({}, RING, { inc: 45 }))).toBeLessThan(0);
+  expect(Math.abs(RG.nodeRate(Object.assign({}, RING, { inc: 90 })))).toBeLessThan(1e-12);
+});
+
+test("precessing by d degrees is the same as starting d degrees further on", () => {
+  const tilted = { alt: 3000, inc: 50, raan: 200, width: 100, albedo: 0.2 };
+  const opts = { lat: 45, lst: 3.0, dec: 0, art: null };
+  const moved = RG.evaluate(RG.build(tilted, RA_SUN, true), Object.assign({ dNode: 37 }, opts));
+  const built = RG.evaluate(RG.build(Object.assign({}, tilted, { raan: 237 }), RA_SUN, true), opts);
+  for (const k of ["up", "lit", "visible"]) expect(Math.abs(moved[k] - built[k])).toBeLessThan(0.5);
+  expect(moved.best).toBeCloseTo(built.best, 1);
+});
+
+test("node shift counts days from noon on the epoch", () => {
+  const sp = { alt: 2000, inc: 45, raan: 0, width: 100, albedo: 0.2 };
+  expect(RG.nodeShift(sp, "2026-03-20", 12.0, "2026-03-20")).toBeCloseTo(0, 12);
+  expect(RG.nodeShift(sp, "2026-03-30", 12.0, "2026-03-20")).toBeCloseTo(10 * RG.nodeRate(sp), 9);
+  // 6 am the next morning, written as lst 30 on the night's date
+  expect(RG.nodeShift(sp, "2026-03-20", 30.0, "2026-03-20")).toBeCloseTo(0.75 * RG.nodeRate(sp), 9);
 });

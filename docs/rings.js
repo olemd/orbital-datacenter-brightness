@@ -19,8 +19,20 @@
  * frame, the same transform evaluateStars uses for stars. An equatorial ring
  * (inclination 0) is symmetric about the pole and looks identical all night;
  * only Earth's shadow moves along it. An inclined ring wheels across the sky
- * with the stars. Nodal precession, which a real ring would need to manage,
- * is not modelled: the node stays where you put it.
+ * with the stars.
+ *
+ * Precession. The Earth's equatorial bulge (J2) turns a tilted ring's plane
+ * about the pole. For material moving at orbital speed the node drifts at
+ *
+ *     dRAAN/dt = -1.5 n J2 (R_E / a)^2 cos(i)
+ *
+ * the same rate that makes lsm.sso_inclination sun-synchronous. That is a
+ * few degrees a day for low rings, so over a season it moves a ring right
+ * across the sky. A Birch ring's rotor moves faster than orbital speed and
+ * would precess differently, and an active ring could hold its node, so the
+ * page lets you turn this off. Precession is a rotation about the pole, so
+ * it is applied by turning the observer and Sun the other way (nodeShift,
+ * opts.dNode) rather than rebuilding the ring.
  *
  * Brightness. Each sample stands for a piece of ring of length L and width
  * w, and its magnitude comes from Boley, Lawler & Rein (2026) eq 2, the
@@ -44,6 +56,7 @@
   var ODC = (typeof module !== "undefined" && module.exports) ? require("./physics.js") : root.ODC;
   var DEG = ODC.DEG, R_E = ODC.R_E, K_EXT = ODC.K_EXT;
   var V_SUN = -26.77;                     // Boley et al. solar constant term
+  var MU = 398600.4418, J2 = 1.08263e-3;  // as lsm.py
   var EYE = DEG / 60.0;                   // naked-eye resolution, 1 arcminute
   var MIN_SIN_BETA = 0.05;                // cap the along-the-line pile-up
 
@@ -99,6 +112,52 @@
     return { spec: sp, a: a, n: n, ds: 2 * Math.PI * a / n, pos: pos, tan: tan };
   }
 
+  /** Node drift from J2, degrees per day, for material at orbital speed. */
+  function nodeRate(spec) {
+    var sp = sanitize(spec), a = R_E + sp.alt, n = Math.sqrt(MU / (a * a * a));
+    return -1.5 * n * J2 * (R_E / a) * (R_E / a) * Math.cos(sp.inc * DEG) * 86400.0 / DEG;
+  }
+
+  // Days since J2000 at noon of a "YYYY-MM-DD" date, as solar.py does it.
+  function dayNumber(iso) {
+    var p = iso.split("-").map(Number), y = p[0], m = p[1], d = p[2];
+    var a = Math.floor((14 - m) / 12), yy = y + 4800 - a, mm = m + 12 * a - 3;
+    var jdn = d + Math.floor((153 * mm + 2) / 5) + 365 * yy + Math.floor(yy / 4)
+      - Math.floor(yy / 100) + Math.floor(yy / 400) - 32045;
+    return jdn - 2451545.0 + 0.5;
+  }
+
+  /**
+   * How far the node has drifted, degrees, from local solar noon on the
+   * epoch date to local solar time lstHr on dateIso. The RAAN you type is
+   * the node at the epoch. lstHr may run past 24 into the next morning.
+   */
+  function nodeShift(spec, dateIso, lstHr, epochIso) {
+    var days = dayNumber(dateIso) + (lstHr - 12.0) / 24.0 - dayNumber(epochIso);
+    return nodeRate(spec) * days;
+  }
+
+  // Turn a vector about the pole (z) by ang radians.
+  function rotZ(v, ang) {
+    var c = Math.cos(ang), s = Math.sin(ang);
+    return [c * v[0] - s * v[1], s * v[0] + c * v[1], v[2]];
+  }
+
+  /**
+   * Observer and Sun in the ring's own frame. A ring whose node has moved by
+   * dNode degrees looks, to the observer, exactly like the unmoved ring seen
+   * by an observer and Sun turned by -dNode about the pole. East/north/up
+   * turn with the observer, so directions come out in the true local frame.
+   */
+  function frame(lat, lst, dec, dNode) {
+    var o = ODC.observer(lat, lst), s = ODC.sunDir(dec), a = -(dNode || 0) * DEG;
+    if (a === 0) return { o: o, s: s };
+    return {
+      o: { r: rotZ(o.r, a), up: rotZ(o.up, a), east: rotZ(o.east, a), north: rotZ(o.north, a) },
+      s: rotZ(s, a)
+    };
+  }
+
   /**
    * Magnitude of a ring piece of length L_m by width w_m (metres) at range
    * d_km, phase angle phi and airmass X. Boley et al. eq 2 with
@@ -113,8 +172,9 @@
   /**
    * One ring at one instant.
    *
-   * opts: { lat, lst, dec, art (Bortle skyglow or null), local (bool: also
-   *         return the visible samples for drawing) }
+   * opts: { lat, lst, dec, art (Bortle skyglow or null), dNode (degrees the
+   *         node has precessed, from nodeShift; 0 if omitted), local (bool:
+   *         also return the visible samples for drawing) }
    *
    * Arc lengths are angles on the sky, in degrees, summed over samples:
    *   up       ring above the horizon
@@ -122,11 +182,13 @@
    *   visible  of that, bright enough to see against the local sky
    * best is the brightest one-arcminute patch that is visible (magnitude),
    * with its direction in east/north/up for aiming. draw, if local, packs
-   * [east, north, up, V] per visible sample, where V is for the sample's own
-   * length so the drawn line carries the right total light.
+   * [east, north, up, V, width] per visible sample, where V is for the
+   * sample's own length so the drawn line carries the right total light,
+   * and width is the ring's angular width there in radians (width / range,
+   * face-on), so wide nearby rings can be drawn as bands.
    */
   function evaluate(ring, opts) {
-    var o = ODC.observer(opts.lat, opts.lst), s = ODC.sunDir(opts.dec);
+    var f = frame(opts.lat, opts.lst, opts.dec, opts.dNode), o = f.o, s = f.s;
     var sunEl = Math.asin(clip(s[0] * o.up[0] + s[1] * o.up[1] + s[2] * o.up[2], -1, 1)) / DEG;
     var art = (opts.art === undefined) ? null : opts.art;
     var ctx = ODC.skyContext(sunEl, art);
@@ -172,7 +234,10 @@
       vis += ang;
       var dE = vx * ex + vy * ey + vz * ez, dN = vx * nx + vy * ny + vz * nz;
       if (best === null || Veye < best) { best = Veye; bestDir = [dE, dN, sinAlt]; }
-      if (local) draw.push(dE, dN, sinAlt, pieceMag(sp.albedo, ds * 1e3, sp.width, d, phi, X));
+      if (local) {
+        draw.push(dE, dN, sinAlt, pieceMag(sp.albedo, ds * 1e3, sp.width, d, phi, X),
+                  sp.width / (d * 1e3));
+      }
     }
     return {
       sunEl: sunEl, up: up, lit: lit, visible: vis, best: best, bestDir: bestDir,
@@ -185,8 +250,8 @@
    * sample above the horizon, in ring order, so the caller can draw the
    * path and show which part Earth's shadow covers. Use a coarse ring.
    */
-  function path(ring, lat, lst, dec) {
-    var o = ODC.observer(lat, lst), s = ODC.sunDir(dec), P = ring.pos, out = [];
+  function path(ring, lat, lst, dec, dNode) {
+    var f = frame(lat, lst, dec, dNode), o = f.o, s = f.s, P = ring.pos, out = [];
     for (var k = 0; k < ring.n; k++) {
       var px = P[3 * k], py = P[3 * k + 1], pz = P[3 * k + 2];
       var rx = px - o.r[0], ry = py - o.r[1], rz = pz - o.r[2];
@@ -214,7 +279,8 @@
 
   var api = {
     LIMITS: LIMITS, EYE: EYE, sanitize: sanitize, build: build, evaluate: evaluate,
-    pieceMag: pieceMag, path: path, equatorialMaxLat: equatorialMaxLat
+    pieceMag: pieceMag, path: path, equatorialMaxLat: equatorialMaxLat,
+    nodeRate: nodeRate, nodeShift: nodeShift, dayNumber: dayNumber
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.RINGS = api;
