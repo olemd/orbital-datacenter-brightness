@@ -66,8 +66,10 @@
   }
 
   // ------------------------------------------------------------- state
+  // epoch: the date the typed node RAs refer to; prec: apply J2 node drift
   var S = { lat: 37.2, date: todayISO(), t: 120, bortle: 1, az: 180, el: 25, fov: 100,
-            grid: false, paths: true, rings: PRESETS.mixed.rings.map(RG.sanitize) };
+            grid: false, paths: true, rings: PRESETS.mixed.rings.map(RG.sanitize),
+            epoch: "2026-03-20", prec: true };
   var autoAim = true, elFromHash = false;
 
   (function readHash() {
@@ -84,6 +86,8 @@
     if ((v = num("fov", 20, 120)) !== null) S.fov = v;
     if ((v = num("el", -10, 89.5)) !== null) { S.el = v; elFromHash = true; }
     if ((v = num("az", 0, 360)) !== null) { S.az = v; autoAim = false; }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(q.ep || "")) S.epoch = q.ep;
+    if (q.pr === "0" || q.pr === "1") S.prec = q.pr === "1";
     // r=alt,inc,raan,width,albedo;...  every value clamped by RG.sanitize
     if (q.r) {
       var rs = q.r.split(";").slice(0, MAX_RINGS).map(function (t) {
@@ -102,15 +106,16 @@
         return [sp.alt, sp.inc, sp.raan, sp.width, sp.albedo].join(",");
       }).join(";");
       var s = "lat=" + S.lat + "&date=" + S.date + "&t=" + Math.round(S.t) + "&b=" + S.bortle +
-        "&r=" + r + "&az=" + Math.round(S.az) + "&el=" + Math.round(S.el) + "&fov=" + Math.round(S.fov);
+        "&r=" + r + "&ep=" + S.epoch + "&pr=" + (S.prec ? 1 : 0) + "&az=" + Math.round(S.az) + "&el=" + Math.round(S.el) + "&fov=" + Math.round(S.fov);
       history.replaceState(null, "", "#" + s);
     }, 300);
   }
 
   // -------------------------------------------------------------- data
-  var man = window.ODC_MANIFEST;
-  if (!man || !window.ODC_BLOB || !P || !RG) { fatal("The data file did not load."); return; }
-  var stars = P.loadStars(man, P.decodeBase64(window.ODC_BLOB));
+  // stars.js (export_ring_stars.py): the star catalog without the satellites
+  var man = window.ODC_STARS_MANIFEST;
+  if (!man || !window.ODC_STARS_BLOB || !P || !RG) { fatal("The data file did not load."); return; }
+  var stars = P.loadStars(man, P.decodeBase64(window.ODC_STARS_BLOB));
 
   // Built rings depend on the spec and, through the node, on the date.
   var built = { key: "", fine: [], coarse: [] };
@@ -143,13 +148,21 @@
   }
   function lstNow() { return N.ref + S.t / 60.0; }
 
+  // Node drift of ring i at local solar time lst on the night's date.
+  function dNode(i, lst) {
+    return S.prec ? RG.nodeShift(S.rings[i], S.date, lst, S.epoch) : 0;
+  }
+
   // ------------------------------------------------------ the instant
   var R = null;
   function evaluateNow() {
     var art = P.BORTLE[S.bortle], lst = lstNow(), B = rings();
-    var opts = { lat: S.lat, lst: lst, dec: N.dec, art: art, local: true };
-    var res = B.fine.map(function (r) { return RG.evaluate(r, opts); });
-    var paths = S.paths ? B.coarse.map(function (r) { return RG.path(r, S.lat, lst, N.dec); }) : null;
+    var res = B.fine.map(function (r, i) {
+      return RG.evaluate(r, { lat: S.lat, lst: lst, dec: N.dec, art: art, local: true, dNode: dNode(i, lst) });
+    });
+    var paths = S.paths ? B.coarse.map(function (r, i) {
+      return RG.path(r, S.lat, lst, N.dec, dNode(i, lst));
+    }) : null;
     var st = P.evaluateStars(stars, { lat: S.lat, lst: lst, dec: N.dec, raSun: N.ra, art: art });
     var sa = P.sunAltAz(S.lat, lst, N.dec);
     R = { rings: res, paths: paths, st: st, sun: sa, szen: P.addGlow(P.skyBrightness(sa.el), art) };
@@ -161,7 +174,7 @@
   var canvas = $("sky"), overlay = $("overlay"), octx = overlay.getContext("2d");
   var gl = canvas.getContext("webgl2", { antialias: false, alpha: false, preserveDrawingBuffer: true });
   var glOK = !!gl, floatOK = false, W = 1, H = 1, dpr = 1;
-  var progSky, progPts, progTone, vaoTri, bufTri, fbo = null, fboTex = null;
+  var progSky, progPts, progRing, progTone, vaoTri, bufTri, fbo = null, fboTex = null;
   var bufRing = null, nRing = 0, bufStar = null, bufStarCol = null, nStar = 0;
 
   var GLSL_COMMON = [
@@ -216,19 +229,16 @@
     "  o = vec4(uDirect > 0.5 ? tone(v) : v, 1.0);",
     "}"].join("\n");
 
-  // As app.js, plus uFixR: ring samples each carry only a sliver of light,
-  // so they would fall under the per-point visibility cutoff even when the
-  // line they make up is bright. With uFixR > 0 every point is drawn with a
-  // fixed footprint and the additive blend builds the line.
+  // Identical to app.js: stars as Gaussian point sources
   var VS_PTS = "#version 300 es\nprecision highp float;\n" + GLSL_COMMON + "\n" + [
     "layout(location=0) in vec3 aDir; layout(location=1) in float aMag; layout(location=2) in vec3 aCol;",
     "uniform vec3 uFwd, uRight, uUp; uniform vec2 uTan;",
-    "uniform float uFluxK, uSigma, uMaxR, uFixR;",
+    "uniform float uFluxK, uSigma, uMaxR;",
     "out float vPeak; out vec3 vCol; out float vSize;",
     "void main() {",
     "  float z = dot(aDir, uFwd);",
     "  float peak = uFluxK * exp2(-1.3287712379549449 * (aMag - 21.7));",
-    "  float r = uFixR > 0.0 ? uFixR : min(uSigma * sqrt(2.0 * log(max(peak / 0.0015, 1.0))), uMaxR);",
+    "  float r = min(uSigma * sqrt(2.0 * log(max(peak / 0.0015, 1.0))), uMaxR);",
     "  float alt = asin(clamp(aDir.z, -1.0, 1.0)) / DEG;",
     "  bool hide = z <= 0.02 || r < 0.35 || alt < ridge(atan(aDir.x, aDir.y));",
     "  vec2 ndc = vec2(dot(aDir, uRight), dot(aDir, uUp)) / (max(z, 0.02) * uTan);",
@@ -247,7 +257,42 @@
     "  o = vec4(uDirect > 0.5 ? tone(v) : v, 1.0);",
     "}"].join("\n");
 
-  var FS_TONE = "#version 300 es\nprecision highp float;\n" + GLSL_COMMON + "\n" + [
+  // Ring samples. Each carries only a sliver of light, so unlike a star it
+  // is always drawn (no per-point cutoff) and the additive blend builds the
+  // line. aWid is the ring's angular width at the sample: where that is
+  // wider than the normal line, the sample's light is spread over a Gaussian
+  // whose FWHM matches it, keeping the sample's total, so a wide nearby ring
+  // becomes a band that dims as it widens. The footprint is capped at uMaxR
+  // (point sprites have a size limit), beyond which bands stop widening.
+  var VS_RING = "#version 300 es\nprecision highp float;\n" + GLSL_COMMON + "\n" + [
+    "layout(location=0) in vec3 aDir; layout(location=1) in float aMag; layout(location=3) in float aWid;",
+    "uniform vec3 uFwd, uRight, uUp; uniform vec2 uTan;",
+    "uniform float uFluxK, uSigma, uMaxR, uPixRad;",
+    "out float vPeak; out float vSize; out float vSig;",
+    "void main() {",
+    "  float z = dot(aDir, uFwd);",
+    "  float sig = clamp(aWid / uPixRad / 2.3548, uSigma, uMaxR / 2.5);",
+    "  float peak = uFluxK * exp2(-1.3287712379549449 * (aMag - 21.7)) * (uSigma * uSigma) / (sig * sig);",
+    "  float r = 2.5 * sig;",
+    "  float alt = asin(clamp(aDir.z, -1.0, 1.0)) / DEG;",
+    "  bool hide = z <= 0.02 || alt < ridge(atan(aDir.x, aDir.y));",
+    "  vec2 ndc = vec2(dot(aDir, uRight), dot(aDir, uUp)) / (max(z, 0.02) * uTan);",
+    "  gl_Position = hide ? vec4(2.0, 2.0, 2.0, 1.0) : vec4(ndc, 0.0, 1.0);",
+    "  vSize = 2.0 * ceil(r) + 1.0;",
+    "  gl_PointSize = hide ? 0.0 : vSize;",
+    "  vPeak = peak; vSig = sig;",
+    "}"].join("\n");
+
+  var FS_RING = "#version 300 es\nprecision highp float;\n" + GLSL_COMMON + "\n" + [
+    "in float vPeak; in float vSize; in float vSig; out vec4 o;",
+    "uniform vec3 uCol; uniform float uDirect;",
+    "void main() {",
+    "  vec2 p = (gl_PointCoord - 0.5) * vSize;",
+    "  vec3 v = uCol * vPeak * exp(-dot(p, p) / (2.0 * vSig * vSig));",
+    "  o = vec4(uDirect > 0.5 ? tone(v) : v, 1.0);",
+    "}"].join("\n");
+
+  var FS_TONE ="#version 300 es\nprecision highp float;\n" + GLSL_COMMON + "\n" + [
     "uniform sampler2D uTex; out vec4 o;",
     "void main() {",
     "  vec3 x = texelFetch(uTex, ivec2(gl_FragCoord.xy), 0).rgb;",
@@ -277,6 +322,7 @@
       floatOK = !!(gl.getExtension("EXT_color_buffer_float") || gl.getExtension("EXT_color_buffer_half_float"));
       progSky = compile(VS_TRI, FS_SKY);
       progPts = compile(VS_PTS, FS_PTS);
+      progRing = compile(VS_RING, FS_RING);
       progTone = compile(VS_TRI, FS_TONE);
     } catch (err) { glOK = false; fatal("WebGL setup failed: " + err.message); return; }
     vaoTri = gl.createVertexArray(); gl.bindVertexArray(vaoTri);
@@ -309,7 +355,7 @@
     R.rings.forEach(function (r) { all.set(r.draw, off); off += r.draw.length; });
     gl.bindBuffer(gl.ARRAY_BUFFER, bufRing);
     gl.bufferData(gl.ARRAY_BUFFER, all, gl.DYNAMIC_DRAW);
-    nRing = total / 4;
+    nRing = total / 5;                     // [east, north, up, V, width]
     var s = R.st.draw;
     gl.bindBuffer(gl.ARRAY_BUFFER, bufStar);
     gl.bufferData(gl.ARRAY_BUFFER, s.a.subarray(0, s.n), gl.DYNAMIC_DRAW);
@@ -362,30 +408,42 @@
     var maxR = Math.min(28, gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1] / 2 - 1);
     gl.uniform1f(u.uMaxR, maxR);
 
-    function pts(buffer, n, sigmaRef, fixR, gain, colBuf, col) {
-      if (!n) return;
-      gl.uniform1f(u.uSigma, sigmaRef * sigmaK);
-      gl.uniform1f(u.uFixR, fixR);
-      gl.uniform1f(u.uFluxK, gain * exposure / PIX_REF / (2 * Math.PI * sigmaRef * sigmaRef));
-      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    if (nStar) {
+      gl.uniform1f(u.uSigma, SIGMA_STAR * sigmaK);
+      gl.uniform1f(u.uFluxK, exposure / PIX_REF / (2 * Math.PI * SIGMA_STAR * SIGMA_STAR));
+      gl.bindBuffer(gl.ARRAY_BUFFER, bufStar);
       gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 16, 0);
       gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 16, 12);
-      if (colBuf) {
-        gl.bindBuffer(gl.ARRAY_BUFFER, colBuf);
-        gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 0, 0);
-      } else { gl.disableVertexAttribArray(2); gl.vertexAttrib3f(2, col[0], col[1], col[2]); }
-      gl.drawArrays(gl.POINTS, 0, n);
+      gl.bindBuffer(gl.ARRAY_BUFFER, bufStarCol);
+      gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 0, 0);
+      gl.drawArrays(gl.POINTS, 0, nStar);
+      gl.disableVertexAttribArray(2);
     }
+
     // Stars keep the video's peak brightness at every zoom (see PIX_REF).
     // A line has to follow the same rule, or zooming out would crowd more
     // ring into each pixel and brighten it. So the ring's light is scaled
     // from this screen's pixel to the reference pixel, and by the footprint
     // stretch sigmaK, which leaves its cross-section peak where it would be
     // in the video frame.
-    var pixArcsec = (2 * cam.tanH / W) / DEG * 3600;
-    var ringGain = Math.sqrt(PIX_REF) / (pixArcsec * sigmaK);
-    pts(bufStar, nStar, SIGMA_STAR, 0, 1, bufStarCol, null);
-    pts(bufRing, nRing, SIGMA_RING, 2.5 * SIGMA_RING * sigmaK, ringGain, null, [0.95, 0.97, 1.0]);
+    if (nRing) {
+      var pixRad = 2 * cam.tanH / W, pixArcsec = pixRad / DEG * 3600;
+      var ringGain = Math.sqrt(PIX_REF) / (pixArcsec * sigmaK);
+      gl.useProgram(progRing); u = progRing.u;
+      gl.uniform3fv(u.uFwd, cam.fwd); gl.uniform3fv(u.uRight, cam.right); gl.uniform3fv(u.uUp, cam.up);
+      gl.uniform2f(u.uTan, cam.tanH, cam.tanV); gl.uniform1f(u.uDirect, direct);
+      gl.uniform1f(u.uMaxR, Math.min(96, gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1] / 2 - 1));
+      gl.uniform1f(u.uSigma, SIGMA_RING * sigmaK);
+      gl.uniform1f(u.uPixRad, pixRad);
+      gl.uniform3f(u.uCol, 0.95, 0.97, 1.0);
+      gl.uniform1f(u.uFluxK, ringGain * exposure / PIX_REF / (2 * Math.PI * SIGMA_RING * SIGMA_RING));
+      gl.bindBuffer(gl.ARRAY_BUFFER, bufRing);
+      gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 20, 0);
+      gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 20, 12);
+      gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 20, 16);
+      gl.drawArrays(gl.POINTS, 0, nRing);
+      gl.disableVertexAttribArray(3);
+    }
     gl.disableVertexAttribArray(0); gl.disableVertexAttribArray(1); gl.disableVertexAttribArray(2);
     gl.disable(gl.BLEND);
 
@@ -512,13 +570,17 @@
 
   function updatePanels() {
     if (!R) return;
-    var tb = $("ringRows"), rows = [];
+    var tb = $("ringRows"), rows = [], lst = lstNow();
     R.rings.forEach(function (r, i) {
-      var sp = S.rings[i], col = RING_COLORS[i % RING_COLORS.length];
+      var sp = S.rings[i], col = RING_COLORS[i % RING_COLORS.length], status = ringStatus(sp, r);
+      if (S.prec && sp.inc !== 0 && sp.inc !== 180) {
+        status += "; node now at RA " + Math.round(mod(sp.raan + dNode(i, lst), 360)) + "°, drifting " +
+          Math.abs(RG.nodeRate(sp)).toFixed(2) + "°/day " + (RG.nodeRate(sp) < 0 ? "west" : "east");
+      }
       rows.push("<tr><th scope='row' style='color:" + col + "'>" + (i + 1) + ". " + ringName(sp) + "</th>" +
         "<td>" + Math.round(r.visible) + "°</td><td>" + Math.round(r.up) + "°</td>" +
         "<td>" + (r.best === null ? "–" : r.best.toFixed(1)) + "</td></tr>" +
-        "<tr class='status'><td colspan='4'>" + ringStatus(sp, r) + "</td></tr>");
+        "<tr class='status'><td colspan='4'>" + status + "</td></tr>");
     });
     tb.innerHTML = rows.join("");
     $("nStars").textContent = fmt(R.st.count);
@@ -575,7 +637,9 @@
   // ------------------------------------------------------------ curve
   // Visible arc of each ring through the night, from the coarse rings.
   var curve = { key: "", data: {}, job: 0, done: false };
-  function curveKey() { return [S.lat, S.date, S.bortle, JSON.stringify(S.rings)].join("|"); }
+  function curveKey() {
+    return [S.lat, S.date, S.bortle, JSON.stringify(S.rings), S.epoch, S.prec].join("|");
+  }
   function startCurve() {
     var key = curveKey();
     if (key === curve.key) return;
@@ -592,8 +656,8 @@
       var t0 = performance.now();
       while (i < order.length && performance.now() - t0 < 14) {
         var t = order[i++], lst = N.ref + t / 60;
-        curve.data[t] = coarse.map(function (r) {
-          return RG.evaluate(r, { lat: S.lat, lst: lst, dec: N.dec, art: art }).visible;
+        curve.data[t] = coarse.map(function (r, j) {
+          return RG.evaluate(r, { lat: S.lat, lst: lst, dec: N.dec, art: art, dNode: dNode(j, lst) }).visible;
         });
       }
       curve.done = i >= order.length;
@@ -769,7 +833,12 @@
     $("fov").value = S.fov; $("fovOut").textContent = Math.round(S.fov) + "°";
     $("bortleName").textContent = "(" + BORTLE_NAMES[S.bortle] + ")";
     $("paths").checked = S.paths;
+    $("prec").checked = S.prec; $("epoch").value = S.epoch;
     latHint();
+    $("prec").addEventListener("change", function () { S.prec = this.checked; startCurve(); physicsChanged(); });
+    $("epoch").addEventListener("change", function () {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(this.value)) { S.epoch = this.value; startCurve(); physicsChanged(); }
+    });
 
     var pre = $("preset");
     Object.keys(PRESETS).forEach(function (k) {

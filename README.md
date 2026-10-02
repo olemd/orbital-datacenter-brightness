@@ -316,11 +316,21 @@ each with an altitude, inclination, node, width and albedo, and see them from
 any latitude, date and time, with Earth's shadow moving along them through the
 night. The satellite page is unchanged.
 
+The ring view is written by Ole-Morten Duesund in this fork. It reuses Shane
+Ross's sky model, star handling and rendering, but Shane Ross is not involved in
+it and has not reviewed or endorsed it. The ring model and its assumptions are
+the fork's own.
+
 - **Geometry.** Each ring is a circle of radius R_E + altitude. Its plane is
   fixed against the stars: the node is a right ascension, placed into
   `physics.js`'s Sun-fixed frame with the same transform the stars use. An
   equatorial ring looks the same all night. A tilted ring swings across the sky
-  with the stars. Nodal precession is not modelled.
+  with the stars.
+- **Precession.** Optionally, the node drifts under J2 at
+  -1.5 n J2 (R_E / a)^2 cos i, from a node epoch you choose: about 2.7 deg a
+  day for a ring at 2,000 km tilted 45 deg. This assumes the ring moves at
+  orbital speed; a Birch ring's faster rotor, or active station-keeping, would
+  change it. It is applied as a rotation about the pole.
 - **Where it can be seen.** An equatorial ring sets below the horizon beyond
   latitude acos(R_E / (R_E + alt)): 17 deg at 300 km, 40 deg at 2,000 km,
   63 deg at 7,500 km.
@@ -330,10 +340,22 @@ night. The satellite page is unchanged.
 - **Visibility.** A ring counts as visible where a one-arcminute patch of it
   beats the naked-eye limit against the local sky. That treats the patch as a
   point source, which is conservative for a line.
+- **Wide rings** that the eye can resolve are drawn as bands of their angular
+  width (seen face-on), with the same total light spread across them.
 
-The ring physics is `docs/rings.js`, the page is `docs/rings-app.js`, and the
-tests run with `bun test` (`tests/rings.test.js`). Unlike the satellite page
-there is no Python reference implementation of the rings yet.
+The ring physics is `docs/rings.js` and the page is `docs/rings-app.js`. As
+with the satellites, there is a Python reference, `rings.py`, built on `lsm`,
+`twilight` and `skymodel`, and a checker that runs the same cases through both:
+
+```
+python3 rings.py                # example cases
+python3 validate_rings.py       # docs/rings.js against rings.py
+python3 export_ring_stars.py    # writes docs/stars.js
+bun test                        # tests/rings.test.js
+```
+
+They agree to about 1e-13 degrees across 15 cases. The ring page loads
+`docs/stars.js` (the star catalog alone, about 190 kB) instead of `data.js`.
 
 The older Streamlit version needs Python running on a server:
 
@@ -368,6 +390,8 @@ table above are real, not sampling noise.
 | `elevation.py` | the distribution of elevation angle, low sky against high |
 | `docs/` | the browser version: `index.html`, `app.js`, `physics.js`, `data.js` |
 | `docs/rings.html`, `rings.js`, `rings-app.js` | the orbital-ring page and its physics (this fork) |
+| `docs/stars.js`, `export_ring_stars.py` | the star catalog alone, for the ring page, and its exporter |
+| `rings.py`, `validate_rings.py` | Python reference for the ring physics, and the browser check against it |
 | `tests/rings.test.js` | tests for the ring physics, `bun test` |
 | `export_web_data.py` | writes `docs/data.js`, the exact constellation and star catalog |
 | `validate_web.py` | checks the browser physics against the Python, count for count |

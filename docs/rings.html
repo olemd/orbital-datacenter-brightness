@@ -174,6 +174,15 @@
       </div>
       <div id="ringEditor"></div>
       <button id="btnAddRing" type="button">Add a ring</button>
+      <div class="row" style="margin-top:12px">
+        <label class="small"><input type="checkbox" id="prec" aria-describedby="precHelp"> Nodal precession (J2)</label>
+      </div>
+      <div class="row">
+        <label class="small" for="epoch">Node RAs are as of</label>
+        <input type="date" id="epoch">
+      </div>
+      <div class="small" id="precHelp" style="margin-top:6px">The Earth's bulge slowly turns a tilted
+        ring's plane, by degrees per day for low rings. Rates assume the ring moves at orbital speed.</div>
     </div>
 
     <div class="box">
@@ -221,8 +230,14 @@
   latitudes and, because its plane is fixed against the stars, it swings across the sky through the night
   as the stars do. An equatorial ring looks the same all night, and only the Earth's shadow moves along it.</p>
   <p><b>Node RA</b> is the right ascension of the ascending node: where a tilted ring crosses the
-  celestial equator heading north, in degrees along the equator. The node is held fixed. A real ring
-  would precess slowly under the Earth's equatorial bulge unless something actively held it.</p>
+  celestial equator heading north, in degrees along the equator, as of the date you give.</p>
+  <p><b>Precession.</b> The Earth's equatorial bulge turns a tilted ring's plane about the pole, the
+  same effect that keeps sun-synchronous satellites in step with the Sun. For a ring moving at orbital
+  speed the node drifts by 1.5 n J<sub>2</sub> (R<sub>E</sub>/a)<sup>2</sup> cos i per unit time: about
+  2.7&deg; a day westward for a ring at 2,000 km tilted 45&deg;, so within weeks it moves from the
+  evening sky to the morning sky. A Birch ring's rotor moves faster than orbital speed and would
+  precess at a different rate, and a ring could be steered to hold its node, so you can turn this off.
+  Equatorial and polar rings do not drift in any way you could see.</p>
   <p><b>Brightness.</b> Each piece of ring is treated as a diffuse reflector of its own area, using the
   same Lambertian formula the satellite page uses (Boley, Lawler &amp; Rein 2026,
   <a href="https://arxiv.org/abs/2608.02757">arXiv:2608.02757</a>, equation 2). Real structures would
@@ -231,19 +246,23 @@
   <p><b>Visibility.</b> The eye resolves about one arcminute, so a ring counts as visible where a patch
   that size is brighter than the faintest point of light you could see against the sky at that spot. The
   eye picks out lines a little more easily than points, so faint rings may be somewhat easier to see than
-  this says. Very wide, nearby rings are resolved bands, and they are drawn here as lines.</p>
+  this says. Rings wide enough to resolve are drawn as bands of their angular width, seen face-on,
+  with their light spread across them. Very wide bands are capped at about 190 pixels across.</p>
   <p><b>Sky and stars</b> come from the satellite page: twilight sky brightness calibrated at the zenith
   and modelled across the dome, artificial skyglow from the light pollution setting, and 8,912 real stars
   from the HYG catalog. The Moon is not modelled.</p>
   <p><b>Sun time, not clock time.</b> Times are local solar time: noon is when the Sun is highest.</p>
-  <p>This page is part of a fork of
+  <p><b>Credits.</b> This ring view was written by Ole-Morten Duesund, in a fork of
   <a href="https://github.com/sdross0/orbital-datacenter-brightness">Shane Ross's orbital data center
-  simulation</a>, which it shares its sky, stars and brightness model with.
-  <a href="index.html">The satellite version is here.</a></p>
+  simulation</a> (Virginia Tech, MIT licence). It reuses that project's sky model, star handling and
+  rendering, and the brightness formula of Boley, Lawler &amp; Rein. The ring model, its assumptions
+  and any errors are the fork's own. Shane Ross is not involved in this ring view and has not reviewed
+  or endorsed it. <a href="index.html">The original satellite simulation is here.</a></p>
 </section>
-<footer>Ring view built on work by Shane Ross, Virginia Tech &middot; <span id="version"></span></footer>
+<footer>Ring view by Ole-Morten Duesund, adapted from Shane Ross's open-source satellite simulation;
+not affiliated with or endorsed by its author &middot; <span id="version"></span></footer>
 
-<script src="data.js"></script>
+<script src="stars.js"></script>
 <script src="physics.js"></script>
 <script src="rings.js"></script>
 <script src="rings-app.js"></script>
