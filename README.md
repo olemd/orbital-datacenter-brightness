@@ -321,6 +321,32 @@ Ross's sky model, star handling and rendering, but Shane Ross is not involved in
 it and has not reviewed or endorsed it. The ring model and its assumptions are
 the fork's own.
 
+![Four equatorial rings from 37.2 deg N, 45 minutes after sunset](assets/rings_equatorial.png)
+
+*Equatorial rings at 500, 2,000, 5,000 and 20,000 km, seen from 37.2 deg N at
+the March equinox, 45 minutes after sunset, looking south. The 500 km ring is
+below the horizon at this latitude. The others run into Earth's shadow toward
+the west (dotted). The curve below shows each ring's visible arc through the
+night.*
+
+![A ring at 3,000 km tilted 45 deg, crossing the sky with the stars](assets/rings_tilted.png)
+
+*One ring at 3,000 km, tilted 45 deg (node RA 135 deg), from the same place 90
+minutes after sunset. It is fixed against the stars, so it moves with them
+through the night and has set by midnight.*
+
+![Three ground-fixed Birch rings with stations and elevator cables](assets/rings_birch.png)
+
+*Ground-fixed (Birch) rings at 1,000 km, tilted 0, 60 and 90 deg, seen from
+20 deg N 45 minutes after sunset. Stations sit where the rings cross, and each
+has a 10 m elevator cable hanging to the ground. These rings hold still over
+the ground, so only the lighting changes during the night.*
+
+Each view's settings are in the page URL, so these can be reproduced with
+`rings.html#` followed by, for example,
+`lat=20&date=2026-03-20&t=45&b=2&r=1000,0,0,100,0.2,1,0,8,500,10;1000,60,0,100,0.2,1,0,6,500,10;1000,90,0,100,0.2,1,-15,6,500,10&az=190&el=35&fov=120`
+for the last one.
+
 - **Geometry.** Each ring is a circle of radius R_E + altitude. Its plane is
   fixed against the stars: the node is a right ascension, placed into
   `physics.js`'s Sun-fixed frame with the same transform the stars use. An
